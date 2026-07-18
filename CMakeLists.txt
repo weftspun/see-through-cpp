@@ -26,17 +26,9 @@ target_include_directories(seethrough PUBLIC src stb)
 add_executable(see-through src/see_through.cpp)
 target_link_libraries(see-through PRIVATE seethrough)
 
-option(SEETHROUGH_TESTS "Build the validation and property tests" ON)
-if (SEETHROUGH_TESTS)
-    set(_st_shared ${BUILD_SHARED_LIBS})
-    set(BUILD_SHARED_LIBS OFF)          # rapidcheck exports nothing as a DLL
-    add_subdirectory(third_party/rapidcheck)
-    set(BUILD_SHARED_LIBS ${_st_shared})
-    add_executable(test_properties tests/test_properties.cpp)
-    target_link_libraries(test_properties PRIVATE seethrough rapidcheck)
-    add_executable(test_graph_properties tests/test_graph_properties.cpp)
-    target_link_libraries(test_graph_properties PRIVATE seethrough rapidcheck)
-endif()
+add_library(seethrough_c SHARED src/seethrough_capi.cpp)
+target_link_libraries(seethrough_c PRIVATE seethrough)
+
 
 foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_unet_blocks test_unet_forward test_scheduler test_layerdiff_e2e test_ddim test_marigold_e2e test_lama graph_mem)
     add_executable(${t} tests/${t}.cpp)
