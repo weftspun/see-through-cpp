@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 bool Model::load(const char * path) {
     ggml_context * c = nullptr;
@@ -15,8 +16,11 @@ bool Model::load(const char * path) {
         const char * key = gguf_get_key(g, i);
         if (gguf_get_kv_type(g, i) == GGUF_TYPE_STRING) {
             std::string k = key;
-            if (k.size() > 12 && k.compare(k.size() - 12, 12, ".config_json") == 0) {
-                config_json[k] = gguf_get_val_str(g, i);
+            for (const char * suf : { ".config_json", ".vocab_json", ".merges_txt" }) {
+                size_t n = strlen(suf);
+                if (k.size() > n && k.compare(k.size() - n, n, suf) == 0) {
+                    config_json[k] = gguf_get_val_str(g, i);
+                }
             }
         }
     }
@@ -44,8 +48,18 @@ ggml_tensor * bias4d(ggml_context * ctx, ggml_tensor * b) {
 
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int stride, int pad) {
     ggml_context * ctx = m.ctx_g;
-    x = ggml_conv_2d(ctx, m.get(pre + ".weight"), x, stride, stride, pad, pad, 1, 1);
-    return ggml_add(ctx, x, bias4d(ctx, m.get(pre + ".bias")));
+    // ggml_conv_2d unconditionally rounds activations to f16 in im2col; for
+    // f32 weights (SDXL VAE encoder has activations too large for that) keep
+    // the whole conv in f32 instead
+    ggml_tensor * w = m.get(pre + ".weight");
+    ggml_type it = w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+    ggml_tensor * im = ggml_im2col(ctx, w, x, stride, stride, pad, pad, 1, 1, true, it);
+    ggml_tensor * r = ggml_mul_mat(ctx,
+        ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]),
+        ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
+    r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
+    r = ggml_cont(ctx, ggml_permute(ctx, r, 0, 1, 3, 2));
+    return ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
 }
 
 ggml_tensor * group_norm_affine(Model & m, ggml_tensor * x, const std::string & pre) {
@@ -53,6 +67,13 @@ ggml_tensor * group_norm_affine(Model & m, ggml_tensor * x, const std::string & 
     x = ggml_group_norm(ctx, x, m.gn_groups, m.gn_eps);
     x = ggml_mul(ctx, x, bias4d(ctx, m.get(pre + ".weight")));
     return ggml_add(ctx, x, bias4d(ctx, m.get(pre + ".bias")));
+}
+
+ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre, float eps) {
+    ggml_context * ctx = m.ctx_g;
+    x = ggml_norm(ctx, x, eps);
+    x = ggml_mul(ctx, x, m.get(pre + ".weight"));
+    return ggml_add(ctx, x, m.get(pre + ".bias"));
 }
 
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {

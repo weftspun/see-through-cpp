@@ -4,6 +4,11 @@
 
 #include "ops.h"
 
+// AutoencoderKL encode: image (h,w,3,1) in [-1,1] -> latent mean (h/8,w/8,4,1),
+// unscaled (deterministic: the mean half of the posterior moments, not
+// .sample()). Weight names: "encoder.*", "quant_conv".
+ggml_tensor * vae_encode(Model & m, ggml_tensor * x);
+
 // AutoencoderKL decode: z (zh,zw,4,1) -> image (8*zh,8*zw,3,1), range [-1,1].
 // Weight names: "post_quant_conv", "decoder.*". Unscaled latent expected.
 ggml_tensor * vae_decode(Model & m, ggml_tensor * z);

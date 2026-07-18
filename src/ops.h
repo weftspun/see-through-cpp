@@ -39,6 +39,10 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre,
 // GroupNorm(m.gn_groups, m.gn_eps) + affine
 ggml_tensor * group_norm_affine(Model & m, ggml_tensor * x, const std::string & pre);
 
+// LayerNorm over ne[0] + affine, for token-major (C, T) activations
+ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre,
+                                float eps = 1e-5f);
+
 // y = W x + b for token-major (C_in, T) activations
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre);
 

@@ -70,13 +70,15 @@ static int compare_ref(ggml_tensor * out, const NpyArray & ref, double threshold
     std::vector<float> y(ggml_nelements(out));
     ggml_backend_tensor_get(out, y.data(), 0, y.size() * 4);
     double max_abs = 0, sum_abs = 0;
+    size_t max_i = 0;
     for (size_t i = 0; i < y.size(); i++) {
         double d = fabs((double) y[i] - (double) ref.data[i]);
-        if (d > max_abs) max_abs = d;
+        if (d > max_abs) { max_abs = d; max_i = i; }
         sum_abs += d;
     }
-    printf("output %lld elems: max_abs_diff=%.6f mean_abs_diff=%.6f\n",
-           (long long) y.size(), max_abs, sum_abs / y.size());
+    printf("output %lld elems: max_abs_diff=%.6f mean_abs_diff=%.6f (argmax %zu: %f vs ref %f)\n",
+           (long long) y.size(), max_abs, sum_abs / y.size(), max_i,
+           (double) y[max_i], (double) ref.data[max_i]);
     printf("%s\n", max_abs < threshold ? "VALIDATION PASS" : "VALIDATION FAIL");
     return max_abs < threshold ? 0 : 1;
 }
