@@ -322,6 +322,5 @@ int main(int argc, char ** argv) {
     }
     svg << "  </g>\n</svg>\n";
     printf("wrote %s (%zu layers)\n", out_path.c_str(), ordered.size());
-           depth_path.c_str(), (out_path + ".json").c_str());
     return 0;
 }

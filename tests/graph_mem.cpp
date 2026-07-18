@@ -18,7 +18,6 @@ int main(int argc, char ** argv) {
     Model m;
     if (!m.load(argv[1])) return 1;
     m.flash_attn = true;
-    m.spatial_chunk = true;
 
     init_graph_ctx(m, 98304);
     ggml_context * ctx = m.ctx_g;
