@@ -16,6 +16,18 @@ scripts first, single-file library later, no PyTorch at runtime.
   (`gen_reference_trans_vae.py` produces the reference pair). Build:
   `cmake -B build -G Ninja && cmake --build build`, then
   `./build/test_trans_vae trans-vae.gguf reference_trans_vae.bin`.
+- The stock **AutoencoderKL decoder** (`sd_vae.decode` inside
+  TransparentVAEDecoder) runs as a ggml graph too (`src/test_sd_vae.cpp`)
+  and validates against diffusers for both VAEs at 256px, f16 weights:
+  layerdiff-vae (SDXL) max abs diff 2.3e-3, marigold-vae (SD) 2.6e-3.
+  References come from `gen_reference_sd_vae.py <component> [res]` (run via
+  `uv run --index https://download.pytorch.org/whl/cpu --index-strategy
+  unsafe-best-match --with torch --with diffusers --with numpy python ...`);
+  then `./build/test_sd_vae layerdiff-vae.gguf reference_sd_vae.bin`.
+- Port note: upstream `TransparentVAEDecoder.estimate_augmented` contains a
+  `break` after the first flip/rot combination — the 8-way ensemble is
+  effectively a single identity pass (median of one), so the C++ decode path
+  is just VAE-decode → UNet1024, no augmentation loop needed.
 
 ## GGUF conversion
 
