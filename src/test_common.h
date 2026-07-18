@@ -31,8 +31,11 @@ static ggml_backend_t st_backend_init() {
     return ggml_backend_cpu_init();
 }
 
-// load weights to the right place for the selected device
+// load weights to the right place for the selected device;
+// SEETHROUGH_FLASH=1 enables ggml_flash_attn_ext in token attention
 static bool st_load(Model & m, const char * path) {
+    const char * fa = getenv("SEETHROUGH_FLASH");
+    if (fa && fa[0] == '1') m.flash_attn = true;
     const char * dev = getenv("SEETHROUGH_DEVICE");
     if (dev && strcmp(dev, "vulkan") == 0) {
         ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);

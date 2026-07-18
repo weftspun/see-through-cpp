@@ -55,7 +55,10 @@ static ggml_backend_t pipe_backend(const PipelineConfig & cfg) {
 
 static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string & path) {
     ggml_backend_dev_t d = pipe_gpu(cfg);
-    if (d) return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
+    if (d) {
+        m.flash_attn = true;   // naive 80x80 spatial attention needs ~21GB at 1280px
+        return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
+    }
     return m.load(path.c_str());
 }
 

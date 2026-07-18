@@ -23,6 +23,7 @@ struct Model {
     int   gn_groups = 32;
     float gn_eps    = 1e-6f;
     int   head_dim  = 0;      // spatial attn: 0 = one head of dim C
+    bool  flash_attn = false; // token attention via ggml_flash_attn_ext (GPU)
 
     Model() = default;
     Model(const Model &) = delete;

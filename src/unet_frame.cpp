@@ -12,17 +12,28 @@ ggml_tensor * attn_tokens(Model & m, ggml_tensor * q_src, ggml_tensor * kv_src,
     ggml_tensor * q = linear(m, q_src, pre + ".to_q");
     ggml_tensor * k = linear(m, kv_src, pre + ".to_k");
     ggml_tensor * v = linear(m, kv_src, pre + ".to_v");
-    q = ggml_scale(ctx, q, 1.0f / sqrtf((float) hd));
 
-    q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, q, hd, n_head, Tq, B), 0, 2, 1, 3)); // (hd,Tq,H,B)
-    k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, k, hd, n_head, Tk, B), 0, 2, 1, 3));
-    v = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, Tk, B), 1, 2, 0, 3)); // (Tk,hd,H,B)
-
-    ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                        // (Tk,Tq,H,B)
-    kq = ggml_soft_max(ctx, kq);
-    ggml_tensor * kqv = ggml_mul_mat(ctx, v, kq);                      // (hd,Tq,H,B)
-    kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));          // (hd,H,Tq,B)
-    kqv = ggml_reshape_3d(ctx, kqv, C, Tq, B);
+    ggml_tensor * kqv;
+    if (m.flash_attn) {
+        // ggml_flash_attn_ext: q/k/v all (hd, T, H, B), v NOT transposed,
+        // scale applied internally; result contiguous (hd*H, Tq, B)
+        q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, q, hd, n_head, Tq, B), 0, 2, 1, 3));
+        k = ggml_cast(ctx, ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, k, hd, n_head, Tk, B), 0, 2, 1, 3)), GGML_TYPE_F16);
+        v = ggml_cast(ctx, ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, Tk, B), 0, 2, 1, 3)), GGML_TYPE_F16);
+        ggml_tensor * fa = ggml_flash_attn_ext(ctx, q, k, v, nullptr,
+                                               1.0f / sqrtf((float) hd), 0.0f, 0.0f);
+        kqv = ggml_reshape_3d(ctx, fa, C, Tq, B);
+    } else {
+        q = ggml_scale(ctx, q, 1.0f / sqrtf((float) hd));
+        q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, q, hd, n_head, Tq, B), 0, 2, 1, 3)); // (hd,Tq,H,B)
+        k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, k, hd, n_head, Tk, B), 0, 2, 1, 3));
+        v = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, Tk, B), 1, 2, 0, 3)); // (Tk,hd,H,B)
+        ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                    // (Tk,Tq,H,B)
+        kq = ggml_soft_max(ctx, kq);
+        kqv = ggml_mul_mat(ctx, v, kq);                                // (hd,Tq,H,B)
+        kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));      // (hd,H,Tq,B)
+        kqv = ggml_reshape_3d(ctx, kqv, C, Tq, B);
+    }
     return linear(m, kqv, pre + ".to_out.0");
 }
 
