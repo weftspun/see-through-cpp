@@ -43,11 +43,14 @@ ggml_tensor * group_norm_affine(Model & m, ggml_tensor * x, const std::string & 
 ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre,
                                 float eps = 1e-5f);
 
-// y = W x + b for token-major (C_in, T) activations
+// y = W x + b for token-major (C_in, T) activations (bias optional: skipped
+// when "<pre>.bias" is absent, e.g. diffusers attention qkv projections)
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre);
 
-// diffusers ResnetBlock2D with temb=None, output_scale_factor=1
-ggml_tensor * resnet_block(Model & m, ggml_tensor * x, const std::string & pre);
+// diffusers ResnetBlock2D, output_scale_factor=1; temb (C_t, F) is projected
+// through "<pre>.time_emb_proj" and added after conv1 (nullptr = skip)
+ggml_tensor * resnet_block(Model & m, ggml_tensor * x, const std::string & pre,
+                           ggml_tensor * temb = nullptr);
 
 // diffusers Attention: GroupNorm-prenorm spatial self-attention with residual;
 // heads of dim m.head_dim (0 = single head of dim C)

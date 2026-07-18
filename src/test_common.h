@@ -46,15 +46,15 @@ static void init_graph_ctx(Model & m, size_t max_nodes) {
     m.ctx_g = ggml_init(ip);
 }
 
-// build+alloc+compute `out` on CPU; inputs must be set via the callback after
-// allocation (gallocr owns the buffers)
+// build+alloc+compute all `outs` in one CPU graph; inputs must be set via the
+// callback after allocation (gallocr owns the buffers)
 template <typename SetInputs>
-static bool compute_cpu(Model & m, ggml_tensor * out, size_t max_nodes, SetInputs set_inputs,
-                        int n_threads = 8) {
+static bool compute_cpu_multi(Model & m, const std::vector<ggml_tensor *> & outs,
+                              size_t max_nodes, SetInputs set_inputs, int n_threads = 8) {
     ggml_backend_t backend = ggml_backend_cpu_init();
     ggml_backend_cpu_set_n_threads(backend, n_threads);
     ggml_cgraph * gf = ggml_new_graph_custom(m.ctx_g, max_nodes, false);
-    ggml_build_forward_expand(gf, out);
+    for (ggml_tensor * out : outs) ggml_build_forward_expand(gf, out);
     printf("graph: %d nodes\n", ggml_graph_n_nodes(gf));
     ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
     if (!ggml_gallocr_alloc_graph(alloc, gf)) { fprintf(stderr, "alloc failed\n"); return false; }
@@ -63,6 +63,12 @@ static bool compute_cpu(Model & m, ggml_tensor * out, size_t max_nodes, SetInput
         fprintf(stderr, "compute failed\n"); return false;
     }
     return true;
+}
+
+template <typename SetInputs>
+static bool compute_cpu(Model & m, ggml_tensor * out, size_t max_nodes, SetInputs set_inputs,
+                        int n_threads = 8) {
+    return compute_cpu_multi(m, { out }, max_nodes, set_inputs, n_threads);
 }
 
 // max-abs-diff gate; returns process exit code

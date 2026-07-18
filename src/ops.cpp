@@ -79,14 +79,20 @@ ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & 
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * y = ggml_mul_mat(ctx, m.get(pre + ".weight"), x);
-    return ggml_add(ctx, y, m.get(pre + ".bias"));
+    if (m.has(pre + ".bias")) y = ggml_add(ctx, y, m.get(pre + ".bias"));
+    return y;
 }
 
-ggml_tensor * resnet_block(Model & m, ggml_tensor * x, const std::string & pre) {
+ggml_tensor * resnet_block(Model & m, ggml_tensor * x, const std::string & pre,
+                           ggml_tensor * temb) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * h = group_norm_affine(m, x, pre + ".norm1");
     h = ggml_silu(ctx, h);
     h = conv2d(m, h, pre + ".conv1");
+    if (temb) {
+        ggml_tensor * t = linear(m, ggml_silu(ctx, temb), pre + ".time_emb_proj");
+        h = ggml_add(ctx, h, ggml_reshape_4d(ctx, t, 1, 1, t->ne[0], t->ne[1]));
+    }
     h = group_norm_affine(m, h, pre + ".norm2");
     h = ggml_silu(ctx, h);
     h = conv2d(m, h, pre + ".conv2");
