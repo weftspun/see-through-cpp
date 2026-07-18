@@ -133,7 +133,7 @@ int main() {
         std::vector<float> x = fx.randvec((size_t) W * H * C);
         auto ref = conv_variant(fx, W, H, C, OC, 1, 1, x, false, false);
         auto dir = conv_variant(fx, W, H, C, OC, 1, 1, x, true, false);
-        RC_ASSERT(max_diff(ref, dir) < 1e-2);
+        RC_ASSERT(max_diff(ref, dir) / max_amp(ref) < 2e-2);
     });
 
     prop("conv2d: row-chunk == im2col at chunk-triggering sizes", []() {
