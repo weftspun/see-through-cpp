@@ -6,10 +6,9 @@ __pycache__/
 build/
 reference_*.bin
 reference_*.npz
-
-build*/
-*.psd
-*.psd.json
+build-vulkan/
+build*/sample_out_*.psd
+build*/sample_out_*.psd.json
 assets_sample_synth.png
 sample_run*.log
 assets/
