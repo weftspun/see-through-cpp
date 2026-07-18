@@ -1,0 +1,28 @@
+// DPM-Solver++ 2M SDE (diffusers DPMSolverMultistepScheduler transcription)
+// in the exact configuration See-Through uses: scaled_linear betas
+// [0.00085, 0.012], 1000 train steps, timestep_spacing "leading" (+1 offset),
+// epsilon prediction, solver_order 2, solver_type "midpoint",
+// algorithm sde-dpmsolver++, final_sigmas_type "zero". Pure CPU math.
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+struct DpmSolverSDE {
+    // schedule (filled by set_timesteps)
+    std::vector<int>    timesteps;   // descending, size = n_steps
+    std::vector<double> sigmas;      // size = n_steps + 1, last = 0
+
+    void set_timesteps(int n_steps);
+
+    // one solver step: eps = UNet output at timesteps[step_index], noise = the
+    // injected SDE noise (same shape); updates `sample` in place
+    void step(std::vector<float> & sample, const std::vector<float> & eps,
+              const std::vector<float> & noise);
+
+    // internal multistep state
+    int step_index = 0, lower_order_nums = 0;
+    std::vector<float> prev_x0;      // model_outputs[-2]
+};
+
+// DDIM with trailing spacing (Marigold: 4 steps, set in M8)

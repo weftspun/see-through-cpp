@@ -14,11 +14,12 @@ add_library(seethrough STATIC
     src/vae.cpp
     src/clip.cpp
     src/unet_frame.cpp
+    src/scheduler.cpp
 )
 target_link_libraries(seethrough PUBLIC ggml)
 target_include_directories(seethrough PUBLIC src)
 
-foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_unet_blocks test_unet_forward)
+foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_unet_blocks test_unet_forward test_scheduler)
     add_executable(${t} src/${t}.cpp)
     target_link_libraries(${t} PRIVATE seethrough)
 endforeach()
