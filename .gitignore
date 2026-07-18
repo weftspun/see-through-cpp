@@ -13,3 +13,4 @@ build*/
 assets_sample_synth.png
 sample_run*.log
 assets/
+gen_reference/*.bin
