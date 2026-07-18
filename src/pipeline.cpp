@@ -60,6 +60,7 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
         if (unet) {
             m.flash_attn = true;    // naive 80x80 spatial attention is ~21GB at 1280px
             m.spatial_chunk = true; // direct conv + per-frame transformers cap peak
+            m.direct_conv = true;
         }                           // VRAM; NOT for VAEs: ggml_conv_2d_direct is
                                     // wrong for the encoder s2/p0 downsample path
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
@@ -309,6 +310,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         std::string p1 = cfg.model_dir + "/layerdiff-vae.gguf";
         std::string p2 = cfg.model_dir + "/trans-vae.gguf";
         if (!pipe_load(cfg, mv, p1) || !pipe_load(cfg, mv, p2)) return false;
+        if (pipe_gpu(cfg)) mv.direct_conv = true;   // decoder-only convs: validated
 
         layers_out.assign(F, Image{});
         for (int f = 0; f < F; f++) {
@@ -486,6 +488,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         Model mv;
         std::string p = cfg.model_dir + "/marigold-vae.gguf";
         if (!pipe_load(cfg, mv, p)) return false;
+        if (pipe_gpu(cfg)) mv.direct_conv = true;   // decode stage only
         depths_out.assign(F, Image{});
         for (int f = 0; f < F; f++) {
             std::vector<float> z(DZ);

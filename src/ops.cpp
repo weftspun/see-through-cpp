@@ -104,8 +104,8 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * w = m.get(pre + ".weight");
     // low-VRAM mode: direct conv — the im2col transients dominate the 1280px
-    // graph (up to 5.7GB each)
-    if (m.spatial_chunk) {
+    // graphs (up to 5.7GB each)
+    if (m.direct_conv) {
         ggml_tensor * r = ggml_conv_2d_direct(ctx, w, x, stride, stride, pad, pad, 1, 1);
         if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
         return r;

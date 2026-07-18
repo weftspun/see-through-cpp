@@ -37,7 +37,7 @@ static bool st_load(Model & m, const char * path) {
     const char * fa = getenv("SEETHROUGH_FLASH");
     if (fa && fa[0] == '1') m.flash_attn = true;
     const char * ch = getenv("SEETHROUGH_CHUNK");
-    if (ch && ch[0] == '1') m.spatial_chunk = true;
+    if (ch && ch[0] == '1') { m.spatial_chunk = true; m.direct_conv = true; }
     const char * dev = getenv("SEETHROUGH_DEVICE");
     if (dev && strcmp(dev, "vulkan") == 0) {
         ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
