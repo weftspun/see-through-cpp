@@ -129,11 +129,13 @@ static ggml_tensor * maybe_t3d(Model & m, ggml_tensor * x, ggml_tensor * ehs,
 }
 
 ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * emb,
-                                 ggml_tensor * ehs) {
+                                 ggml_tensor * ehs,
+                                 std::vector<ggml_tensor *> * taps) {
     ggml_context * ctx = m.ctx_g;
     m.gn_groups = 32; m.gn_eps = 1e-5f;
 
     sample = conv2d(m, sample, "conv_in");
+    if (taps) taps->push_back(sample);
 
     std::vector<ggml_tensor *> res_stack = { sample };
     char pre[96];
@@ -153,11 +155,13 @@ ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * 
             sample = conv2d(m, sample, pre, 2, 1);
             res_stack.push_back(sample);
         }
+        if (taps) taps->push_back(sample);
     }
 
     sample = resnet_block(m, sample, "mid_block.resnets.0", emb);
     sample = maybe_t3d(m, sample, ehs, "mid_block.attentions.0");
     sample = resnet_block(m, sample, "mid_block.resnets.1", emb);
+    if (taps) taps->push_back(sample);
 
     for (int i = 0; ; i++) {
         snprintf(pre, sizeof(pre), "up_blocks.%d", i);

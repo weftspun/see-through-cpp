@@ -31,14 +31,28 @@ def main():
     text_embeds = torch.randn(F, 1280, generator=g)
     time_ids = torch.tensor([512.0, 512.0, 0.0, 0.0, 512.0, 512.0]).repeat(F, 1)
 
+    taps = []
+
+    def tap(mod):
+        def hook(_m, _i, out):
+            taps.append((out[0] if isinstance(out, tuple) else out).detach().clone())
+        mod.register_forward_hook(hook)
+
+    tap(unet.conv_in)
+    for db in unet.down_blocks:
+        tap(db)
+    tap(unet.mid_block)
+
     with torch.no_grad():
         out = unet(sample, torch.tensor(999.0), encoder_hidden_states=ehs,
                    added_cond_kwargs={"text_embeds": text_embeds, "time_ids": time_ids},
                    group_index=0, return_dict=False)[0]
     print("out:", tuple(out.shape), "mean", float(out.mean()), "std", float(out.std()))
+    for t in taps:
+        print("tap:", tuple(t.shape), float(t.mean()))
 
     with open("reference_unet_forward.bin", "wb") as f:
-        for arr in (sample, ehs, text_embeds, out):
+        for arr in [sample, ehs, text_embeds, out] + taps:
             a = arr.numpy().astype("<f4")
             f.write(np.int32(a.ndim).tobytes())
             f.write(np.array(a.shape, dtype="<i8").tobytes())

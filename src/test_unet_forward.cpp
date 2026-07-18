@@ -14,8 +14,9 @@ int main(int argc, char ** argv) {
     if (!m.load(argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
     printf("weights: %zu tensors\n", m.weights.size());
 
-    std::vector<NpyArray> ref;   // sample, ehs, text_embeds, out
-    if (!read_ref(argv[2], ref, 4)) { fprintf(stderr, "failed to read %s\n", argv[2]); return 1; }
+    // sample, ehs, text_embeds, out, then taps: conv_in, down x3, mid
+    std::vector<NpyArray> ref;
+    if (!read_ref(argv[2], ref, 9)) { fprintf(stderr, "failed to read %s\n", argv[2]); return 1; }
     const int64_t F = ref[0].shape[1], ZRES = ref[0].shape[4];
 
     init_graph_ctx(m, 16384);
@@ -34,10 +35,14 @@ int main(int argc, char ** argv) {
     ggml_tensor * aug_text = ggml_add(ctx, text, group_embedding(m, text, "group_embeds.0"));
     emb = ggml_add(ctx, emb, sdxl_add_embed(m, aug_text, tids));
 
-    ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs2);
+    std::vector<ggml_tensor *> taps;
+    ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs2, &taps);
     ggml_set_output(out);
+    for (ggml_tensor * t : taps) ggml_set_output(t);
 
-    if (!compute_cpu(m, out, 16384, [&] {
+    std::vector<ggml_tensor *> outs = { out };
+    outs.insert(outs.end(), taps.begin(), taps.end());
+    if (!compute_cpu_multi(m, outs, 16384, [&] {
             // reference sample is (1, F, 8, 64, 64) — same memory order as
             // our (64, 64, 8, F)
             ggml_backend_tensor_set(sample, ref[0].data.data(), 0, ref[0].data.size() * 4);
@@ -53,5 +58,12 @@ int main(int argc, char ** argv) {
             ggml_backend_tensor_set(ts, t999.data(), 0, F * 4);
         })) return 1;
 
+    static const char * tap_names[] = { "conv_in", "down_block 0", "down_block 1",
+                                        "down_block 2", "mid_block" };
+    for (size_t i = 0; i < taps.size() && i + 4 < ref.size(); i++) {
+        printf("-- %s --\n", tap_names[i]);
+        compare_ref(taps[i], ref[4 + i]);
+    }
+    printf("-- final --\n");
     return compare_ref(out, ref[3]);
 }

@@ -46,5 +46,8 @@ ggml_tensor * sdxl_add_embed(Model & m, ggml_tensor * text_embeds, ggml_tensor *
 // (W, H, C_in, F), emb (1280, F) final time embedding, ehs (Ck, Tk, F) with
 // any group embedding already applied. Self-configuring from weight presence
 // (block/attention/layer counts, head count = C/64). GN32, norm_eps 1e-5.
+// `taps` (optional) receives intermediate activations for validation:
+// conv_in, each down block output, mid block output.
 ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * emb,
-                                 ggml_tensor * ehs);
+                                 ggml_tensor * ehs,
+                                 std::vector<ggml_tensor *> * taps = nullptr);
