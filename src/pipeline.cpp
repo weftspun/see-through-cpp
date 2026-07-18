@@ -346,8 +346,10 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             im.w = im.h = RES; im.c = 4;
             im.data.resize((size_t) RES * RES * 4);
             const size_t P = (size_t) RES * RES;
+            // TransparentVAE output is ARGB planar: ch0 = alpha, ch1..3 = RGB
             for (size_t i = 0; i < P; i++) {
-                for (int c = 0; c < 4; c++) im.data[i * 4 + c] = outs[0][(size_t) c * P + i];
+                for (int c = 0; c < 3; c++) im.data[i * 4 + c] = outs[0][(size_t) (c + 1) * P + i];
+                im.data[i * 4 + 3] = outs[0][i];
             }
             if (!cfg.debug_dir.empty()) {
                 double amax = 0, rmax = 0;
