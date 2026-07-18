@@ -18,19 +18,25 @@ struct BeBuf {
 };
 
 // PackBits one row
-static void packbits(const uint8_t * row, int n, std::vector<uint8_t> & out) {
+void packbits(const uint8_t * row, int n, std::vector<uint8_t> & out) {
+    // fold only runs >= 3 into RLE — breaking a literal for a 2-run costs
+    // more than it saves and breaks the n + ceil(n/128) expansion bound
     int i = 0;
     while (i < n) {
         int run = 1;
         while (i + run < n && run < 128 && row[i + run] == row[i]) run++;
-        if (run >= 2) {
+        if (run >= 3) {
             out.push_back((uint8_t) (int8_t) (1 - run));
             out.push_back(row[i]);
             i += run;
         } else {
-            int lit = 1;
-            while (i + lit < n && lit < 128 &&
-                   !(i + lit + 1 < n && row[i + lit] == row[i + lit + 1])) lit++;
+            int lit = 0;
+            while (i + lit < n && lit < 128) {
+                int r = 1;
+                while (i + lit + r < n && r < 3 && row[i + lit + r] == row[i + lit]) r++;
+                if (r >= 3) break;
+                lit++;
+            }
             out.push_back((uint8_t) (lit - 1));
             out.insert(out.end(), row + i, row + i + lit);
             i += lit;

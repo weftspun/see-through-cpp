@@ -27,6 +27,13 @@ target_include_directories(seethrough PUBLIC src stb)
 add_executable(see-through src/see_through.cpp)
 target_link_libraries(see-through PRIVATE seethrough)
 
+option(SEETHROUGH_TESTS "Build the validation and property tests" ON)
+if (SEETHROUGH_TESTS)
+    add_subdirectory(third_party/rapidcheck)
+    add_executable(test_properties src/test_properties.cpp)
+    target_link_libraries(test_properties PRIVATE seethrough rapidcheck)
+endif()
+
 foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_unet_blocks test_unet_forward test_scheduler test_layerdiff_e2e test_ddim test_marigold_e2e test_lama test_psd graph_mem)
     add_executable(${t} src/${t}.cpp)
     target_link_libraries(${t} PRIVATE seethrough)

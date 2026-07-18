@@ -18,3 +18,6 @@ struct PsdLayer {
 bool write_psd(const std::string & path, int canvas_w, int canvas_h,
                const std::vector<PsdLayer> & layers,
                const std::vector<uint8_t> & composite);
+
+// PackBits RLE of one row (exposed for property tests)
+void packbits(const uint8_t * row, int n, std::vector<uint8_t> & out);
