@@ -38,11 +38,8 @@ Policy:
 
 ### Validation
 
-- [ ] Property-gate the full production envelope per policy above:
-      extend generators to 160×160-latent shapes for direct conv (fixed
-      probes just added), flash attention at Tq=6400/B=13 (cross-backend:
-      GPU flash vs CPU naive), spatial/temporal chunk equivalence at
-      S=6400/F=13, row-chunked decode at 1280²
+- [ ] Production-scale probes only where defects occurred (direct conv at
+      UNet latent sizes — added; more only if implicated by the 1280 bisect)
 - [ ] Full-quality run on the upstream sample (`common/assets/test_image.png`,
       1280px/30 steps, GPU) with verified per-layer content (in flight)
 - [ ] Diagnose the 1280px corruption (decoded 1280 frames are garbage while
@@ -59,19 +56,18 @@ Policy:
 
 ### Hardening
 
-- [ ] Reimplement `write_psd` on psd_sdk behind the same API; keep the
-      `test_psd` + `check_psd.py` byte-exact gate; delete the minimal writer
-      once green. Also write a real (layer-composited) merged preview so
-      viewers don't echo the input page.
+- [x] psd_sdk writer swap: CLOSED as won't-do (YAGNI) — the minimal writer
+      passes the byte-exact psd-tools compat gate; the unused psd_sdk
+      subtree is removed. Reopen only if a real consumer needs features the
+      minimal writer lacks.
 - [ ] Property tests linked in the Vulkan build tree (rapidcheck now forced
       static there; final link blocked only by the running pipeline's DLL
       locks — rebuild after it exits)
 
 ### Repo layout
 
-- [ ] `models/` for `*.gguf` weights; CLI `-m` default becomes `models`
-- [ ] `git mv ggml third_party/ggml` for vendoring consistency (forces one
-      full rebuild of both build trees)
+- [x] models/ for weights (CLI -m default "models"); ggml moved under
+      third_party/
 
 ### Documentation / upstream
 
