@@ -1,0 +1,152 @@
+[
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\gcc.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu11 -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wdouble-promotion -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\ggml.c.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml.c",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml.c",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/ggml.c.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\ggml.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/ggml.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\gcc.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu11 -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wdouble-promotion -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\ggml-alloc.c.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-alloc.c",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-alloc.c",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/ggml-alloc.c.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\ggml-backend.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-backend.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-backend.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/ggml-backend.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\ggml-backend-meta.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-backend-meta.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-backend-meta.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/ggml-backend-meta.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\ggml-opt.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-opt.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-opt.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/ggml-opt.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\ggml-threading.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-threading.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-threading.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/ggml-threading.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\gcc.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu11 -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wdouble-promotion -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\ggml-quants.c.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-quants.c",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-quants.c",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/ggml-quants.c.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_COMMIT=\\\"9be31331\\\" -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_OPENMP -DGGML_VERSION=\\\"0.17.0\\\" -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -fopenmp=libomp -pthread -o ggml\\src\\CMakeFiles\\ggml-base.dir\\gguf.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\gguf.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/gguf.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-base.dir/gguf.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -o ggml\\src\\CMakeFiles\\ggml.dir\\ggml-backend-dl.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-backend-dl.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-backend-dl.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml.dir/ggml-backend-dl.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -o ggml\\src\\CMakeFiles\\ggml.dir\\ggml-backend-reg.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-backend-reg.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-backend-reg.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml.dir/ggml-backend-reg.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\gcc.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu11 -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wdouble-promotion -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\ggml-cpu.c.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\ggml-cpu.c",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/ggml-cpu.c",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu.c.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\ggml-cpu.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\ggml-cpu.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/ggml-cpu.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\repack.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\repack.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/repack.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/repack.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\hbm.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\hbm.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/hbm.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/hbm.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\gcc.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu11 -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wdouble-promotion -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\quants.c.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\quants.c",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/quants.c",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/quants.c.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\traits.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\traits.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/traits.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/traits.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\amx\\amx.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\amx\\amx.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/amx/amx.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/amx/amx.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\amx\\mmq.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\amx\\mmq.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/amx/mmq.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/amx/mmq.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\binary-ops.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\binary-ops.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/binary-ops.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/binary-ops.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\unary-ops.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\unary-ops.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/unary-ops.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/unary-ops.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\vec.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\vec.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/vec.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/vec.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\ops.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\ops.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/ops.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ops.cpp.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\gcc.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu11 -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wdouble-promotion -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\arch\\x86\\quants.c.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\arch\\x86\\quants.c",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/arch/x86/quants.c",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/arch/x86/quants.c.obj"
+},
+{
+  "directory": "C:/Users/ernes/Desktop/see-through-cpp/build",
+  "command": "C:\\Users\\ernes\\scoop\\apps\\llvm-mingw\\current\\bin\\g++.exe -DGGML_SCHED_MAX_COPIES=4 -DGGML_USE_CPU_REPACK -DGGML_USE_OPENMP -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE=600 -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/.. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/. -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu -IC:/Users/ernes/Desktop/see-through-cpp/ggml/src/../include -O3 -DNDEBUG -std=gnu++17 -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wunreachable-code-break -Wunreachable-code-return -Wmissing-prototypes -Wextra-semi -march=native -fopenmp=libomp -o ggml\\src\\CMakeFiles\\ggml-cpu.dir\\ggml-cpu\\arch\\x86\\repack.cpp.obj -c C:\\Users\\ernes\\Desktop\\see-through-cpp\\ggml\\src\\ggml-cpu\\arch\\x86\\repack.cpp",
+  "file": "C:/Users/ernes/Desktop/see-through-cpp/ggml/src/ggml-cpu/arch/x86/repack.cpp",
+  "output": "C:/Users/ernes/Desktop/see-through-cpp/build/ggml/src/CMakeFiles/ggml-cpu.dir/ggml-cpu/arch/x86/repack.cpp.obj"
+}
+]

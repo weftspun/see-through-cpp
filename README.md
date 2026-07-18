@@ -7,7 +7,17 @@ inpainted semantic layers + pseudo-depth → layered PSD. Modeled on
 [trellis2cpp](https://github.com/weftspun/trellis2cpp): GGUF conversion
 scripts first, single-file library later, no PyTorch at runtime.
 
-## Status: phase 1 — GGUF conversion
+## Status
+
+- **Phase 1 done** — all five diffusers components convert to GGUF (below).
+- **Phase 2/3 started** — the TransparentVAE decoder head (UNet1024) runs as
+  a ggml graph (`src/test_trans_vae.cpp`, CPU) and validates against the
+  PyTorch reference: max abs diff 6.5e-4 at 256px, f16 weights
+  (`gen_reference_trans_vae.py` produces the reference pair). Build:
+  `cmake -B build -G Ninja && cmake --build build`, then
+  `./build/test_trans_vae trans-vae.gguf reference_trans_vae.bin`.
+
+## GGUF conversion
 
 `convert_diffusers_to_gguf.py` converts any See-Through diffusers component
 to GGUF v3 (same self-contained writer as trellis2cpp; numpy +
