@@ -18,6 +18,7 @@ add_library(seethrough STATIC
     src/lama.cpp
     src/psd_writer.cpp
     src/image_utils.cpp
+    src/postproc.cpp
 )
 target_link_libraries(seethrough PUBLIC ggml)
 target_include_directories(seethrough PUBLIC src stb)
