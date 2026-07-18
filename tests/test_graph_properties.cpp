@@ -259,10 +259,13 @@ int main() {
             std::vector<float> x = fx.randvec((size_t) cs.W * cs.H * cs.C);
             auto ref = conv_variant(fx, cs.W, cs.H, cs.C, cs.OC, cs.stride, 1, x, false, false);
             auto dir = conv_variant(fx, cs.W, cs.H, cs.C, cs.OC, cs.stride, 1, x, true, false);
-            double d = max_diff(ref, dir);
-            printf("   %dx%dx%d s%d: direct vs im2col %.6f %s\n", cs.W, cs.H, cs.C,
-                   cs.stride, d, d < 5e-2 ? "ok" : "FAIL");
-            if (d >= 5e-2) failures++;
+            // relative: Vulkan direct conv may accumulate in f16 (matches the
+            // f16-weight production configuration); synthetic weights inflate
+            // magnitudes with channel count
+            double d = max_diff(ref, dir) / max_amp(ref);
+            printf("   %dx%dx%d s%d: direct vs im2col rel %.6f %s\n", cs.W, cs.H, cs.C,
+                   cs.stride, d, d < 2e-2 ? "ok" : "FAIL");
+            if (d >= 2e-2) failures++;
         }
     }
 
@@ -292,9 +295,9 @@ int main() {
                 return r;
             };
             auto vn = variant(false), vf = variant(true);
-            double d = max_diff(vn, vf);
-            printf("   T=%d heads=%d: flash vs naive %.6f %s\n", T, heads, d,
-                   d < 1.5e-1 ? "ok" : "FAIL");
+            double d = max_diff(vn, vf) / max_amp(vn);
+            printf("   T=%d heads=%d: flash vs naive rel %.6f %s\n", T, heads, d,
+                   d < 2e-2 ? "ok" : "FAIL");
             if (d >= 2e-2) failures++;
         }
     }
