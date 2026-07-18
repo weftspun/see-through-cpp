@@ -51,6 +51,29 @@ def main():
     img_list = make_layers()
     F = len(img_list)
 
+    # record per-step v-prediction and latents for bisection
+    from diffusers import DDIMScheduler
+    step_eps, step_lat = [], []
+    orig_step = DDIMScheduler.step
+
+    def rec_step(self, model_output, *a, **k):
+        step_eps.append(model_output.detach().clone())
+        r = orig_step(self, model_output, *a, **k)
+        step_lat.append(r.prev_sample.detach().clone())
+        return r
+
+    DDIMScheduler.step = rec_step
+
+    # record the exact tensors entering the UNet
+    unet_inputs = []
+    orig_fwd = unet.forward
+
+    def rec_fwd(sample, *a, **k):
+        unet_inputs.append(sample.detach().clone())
+        return orig_fwd(sample, *a, **k)
+
+    unet.forward = rec_fwd
+
     # replicate single_infer's only generator draw so the C++ test can inject it
     g = torch.Generator().manual_seed(31)
     target_init = torch.randn((F, 4, RES // 8, RES // 8), generator=g)
@@ -68,12 +91,13 @@ def main():
         return torch.from_numpy(arr).movedim(-1, 0)
 
     tens = torch.stack([_np_transform(i) for i in img_list])
-    lat = torch.cat([encode_argb_list(pipe.vae, i[None, None]) for i in tens], dim=1)
-    page_lat = encode_argb_list(pipe.vae, tens[-1][None][None])
+    lat = torch.cat([encode_argb_list(pipe.vae, i[None, None], pad_argb=True) for i in tens], dim=1)
+    page_lat = encode_argb_list(pipe.vae, tens[-1][None][None], pad_argb=True)
     cond = torch.cat([page_lat.expand(-1, F, -1, -1, -1), lat], dim=2)[0]  # (F,8,h,w)
 
     ehs = pipe.empty_text_embed                   # (1, 2, 1024)
-    arrays = [cond, ehs[0], target_init, depth.float()]
+    arrays = [cond, ehs[0], target_init, depth.float()] + step_eps + step_lat \
+        + [unet_inputs[0].squeeze(0)]
     with open("reference_marigold.bin", "wb") as f:
         for arr in arrays:
             a = arr.detach().numpy().astype("<f4")

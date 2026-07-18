@@ -79,14 +79,11 @@ int main(int argc, char ** argv) {
     ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
     if (!ggml_gallocr_alloc_graph(alloc, gf)) { fprintf(stderr, "alloc failed\n"); return 1; }
 
-    ggml_backend_tensor_set(ehs, r_ehs.data.data(), 0, r_ehs.data.size() * 4);
-    ggml_backend_tensor_set(text, r_pool.data.data(), 0, r_pool.data.size() * 4);
     std::vector<float> v(6 * F);
     for (int f = 0; f < F; f++) {
         const float ids[6] = { (float) RES, (float) RES, 0, 0, (float) RES, (float) RES };
         for (int i = 0; i < 6; i++) v[f * 6 + i] = ids[i];
     }
-    ggml_backend_tensor_set(tids, v.data(), 0, v.size() * 4);
 
     DpmSolverSDE sch;
     sch.set_timesteps(STEPS);
@@ -106,6 +103,11 @@ int main(int argc, char ** argv) {
                       input.begin() + f * 2 * DZ);
             std::copy(c_concat.begin(), c_concat.end(), input.begin() + f * 2 * DZ + DZ);
         }
+        // gallocr recycles input buffers after their last read within one
+        // compute — EVERY input must be re-set before EVERY compute
+        ggml_backend_tensor_set(ehs, r_ehs.data.data(), 0, r_ehs.data.size() * 4);
+        ggml_backend_tensor_set(text, r_pool.data.data(), 0, r_pool.data.size() * 4);
+        ggml_backend_tensor_set(tids, v.data(), 0, v.size() * 4);
         ggml_backend_tensor_set(sample, input.data(), 0, input.size() * 4);
         std::vector<float> tstep(F, (float) sch.timesteps[s]);
         ggml_backend_tensor_set(ts, tstep.data(), 0, F * 4);
@@ -127,6 +129,9 @@ int main(int argc, char ** argv) {
         };
         stage("eps", eps, ref[8 + s]);
         stage("lat", lat, ref[10 + s]);
+        if (argc > 4 && std::string(argv[4]) == "--teacher-force") {
+            lat = ref[10 + s].data;      // continue from upstream's own latents
+        }
     }
 
     NpyArray out_arr;

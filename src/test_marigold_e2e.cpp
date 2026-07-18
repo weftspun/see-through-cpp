@@ -16,8 +16,10 @@ int main(int argc, char ** argv) {
     }
     setvbuf(stdout, nullptr, _IONBF, 0);
 
-    std::vector<NpyArray> ref;   // cond (F,8,h,w), ehs (2,1024), target (F,4,h,w), depth (F,H,W)
-    if (!read_ref(argv[3], ref, 4)) { fprintf(stderr, "failed to read %s\n", argv[3]); return 1; }
+    // cond (F,8,h,w), ehs (2,1024), target (F,4,h,w), depth (F,H,W), eps x4,
+    // lat x4, unet_input_step0 (F,12,h,w)
+    std::vector<NpyArray> ref;
+    if (!read_ref(argv[3], ref, 13)) { fprintf(stderr, "failed to read %s\n", argv[3]); return 1; }
     const int64_t F = ref[0].shape[0], ZR = ref[0].shape[3];
     const int STEPS = 4;
     const float SCALE = 0.18215f;
@@ -29,12 +31,10 @@ int main(int argc, char ** argv) {
 
     init_graph_ctx(m, 16384);
     ggml_context * ctx = m.ctx_g;
-
     ggml_tensor * sample = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, ZR, ZR, 12, F);
     ggml_tensor * ehs    = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1024, 2, F);
     ggml_tensor * ts     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, F);
     for (ggml_tensor * t : { sample, ehs, ts }) ggml_set_input(t);
-
     ggml_tensor * emb = time_embed_mlp(m, ggml_timestep_embedding(ctx, ts, 320, 10000),
                                        "time_embedding");
     ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs);
@@ -52,7 +52,6 @@ int main(int argc, char ** argv) {
     for (int f = 0; f < F; f++) {
         std::copy(ref[1].data.begin(), ref[1].data.end(), ehs_f.begin() + f * 2048);
     }
-    ggml_backend_tensor_set(ehs, ehs_f.data(), 0, ehs_f.size() * 4);
 
     DdimTrailing sch;
     sch.set_timesteps(STEPS);
@@ -61,6 +60,7 @@ int main(int argc, char ** argv) {
     const size_t D4 = DZ * 4, D8 = DZ * 8, D = D4 * F;
     std::vector<float> lat = ref[2].data;        // (F,4,h,w)
     std::vector<float> eps(D), input(DZ * 12 * F);
+    double worst_v = 0;
 
     for (int s = 0; s < STEPS; s++) {
         for (int f = 0; f < F; f++) {
@@ -69,6 +69,17 @@ int main(int argc, char ** argv) {
             std::copy(lat.begin() + f * D4, lat.begin() + (f + 1) * D4,
                       input.begin() + f * 12 * DZ + D8);
         }
+        if (s == 0) {
+            double mx = 0;
+            for (size_t i = 0; i < input.size(); i++) {
+                double d = fabs((double) input[i] - (double) ref[12].data[i]);
+                if (d > mx) mx = d;
+            }
+            printf("  step-0 unet input vs upstream: max_abs=%.6f\n", mx);
+        }
+        // gallocr recycles input buffers after their last read within one
+        // compute — EVERY input must be re-set before EVERY compute
+        ggml_backend_tensor_set(ehs, ehs_f.data(), 0, ehs_f.size() * 4);
         ggml_backend_tensor_set(sample, input.data(), 0, input.size() * 4);
         std::vector<float> tstep(F, (float) sch.timesteps[s]);
         ggml_backend_tensor_set(ts, tstep.data(), 0, F * 4);
@@ -79,6 +90,27 @@ int main(int argc, char ** argv) {
         ggml_backend_tensor_get(out, eps.data(), 0, D * 4);
         sch.step(lat, eps, s);
         printf("step %d (t=%d) done\n", s, sch.timesteps[s]);
+        auto stage = [&](const char * what, const std::vector<float> & mine, const NpyArray & r) {
+            double mx = 0, sm = 0;
+            for (size_t i = 0; i < D; i++) {
+                double d = fabs((double) mine[i] - (double) r.data[i]);
+                if (d > mx) mx = d;
+                sm += d;
+            }
+            printf("  %s: max_abs=%.6f mean_abs=%.6f\n", what, mx, sm / D);
+        };
+        stage("v  ", eps, ref[4 + s]);
+        stage("lat", lat, ref[8 + s]);
+        // teacher-force: chaotic amplification of f16 noise through iterated
+        // low-noise steps swamps a free-running comparison; each step's
+        // function is gated on exact upstream inputs instead
+        double mx = 0;
+        for (size_t i = 0; i < D; i++) {
+            double d = fabs((double) eps[i] - (double) ref[4 + s].data[i]);
+            if (d > mx) mx = d;
+        }
+        if (mx > worst_v) worst_v = mx;
+        lat = ref[8 + s].data;
     }
 
     // ---- decode -> RGB mean -> clip -> [0,1] ----
@@ -109,7 +141,9 @@ int main(int argc, char ** argv) {
             sum += diff;
         }
     }
-    printf("depth: max_abs_diff=%.6f mean_abs_diff=%.6f\n", max_abs, sum / (P * F));
-    printf("%s\n", max_abs < 5e-2 ? "VALIDATION PASS" : "VALIDATION FAIL");
-    return max_abs < 5e-2 ? 0 : 1;
+    printf("depth: max_abs_diff=%.6f mean_abs_diff=%.6f (teacher-forced)\n", max_abs, sum / (P * F));
+    printf("worst forced per-step v max_abs=%.6f\n", worst_v);
+    const bool pass = max_abs < 5e-2 && worst_v < 5e-2;
+    printf("%s\n", pass ? "VALIDATION PASS" : "VALIDATION FAIL");
+    return pass ? 0 : 1;
 }

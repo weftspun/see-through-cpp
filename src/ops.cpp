@@ -106,31 +106,31 @@ ggml_tensor * resnet_block(Model & m, ggml_tensor * x, const std::string & pre,
 
 ggml_tensor * attn_block(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_context * ctx = m.ctx_g;
-    const int64_t W = x->ne[0], H = x->ne[1], C = x->ne[2];
+    const int64_t W = x->ne[0], H = x->ne[1], C = x->ne[2], N = x->ne[3];
     const int64_t T = W * H;
     const int64_t hd = m.head_dim > 0 ? m.head_dim : C;
     const int64_t n_head = C / hd;
 
     ggml_tensor * h = group_norm_affine(m, x, pre + ".group_norm");
-    h = ggml_reshape_2d(ctx, h, T, C);
-    h = ggml_cont(ctx, ggml_transpose(ctx, h));                     // (C, T)
+    h = ggml_reshape_3d(ctx, h, T, C, N);
+    h = ggml_cont(ctx, ggml_permute(ctx, h, 1, 0, 2, 3));           // (C, T, N)
 
-    ggml_tensor * q = linear(m, h, pre + ".to_q");                  // (C, T)
+    ggml_tensor * q = linear(m, h, pre + ".to_q");                  // (C, T, N)
     ggml_tensor * k = linear(m, h, pre + ".to_k");
     ggml_tensor * v = linear(m, h, pre + ".to_v");
 
-    q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, q, hd, n_head, T), 0, 2, 1, 3)); // (d,T,H)
-    k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, k, hd, n_head, T), 0, 2, 1, 3));
-    v = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, v, hd, n_head, T), 1, 2, 0, 3)); // (T,d,H)
+    q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, q, hd, n_head, T, N), 0, 2, 1, 3)); // (d,T,H,N)
+    k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, k, hd, n_head, T, N), 0, 2, 1, 3));
+    v = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, T, N), 1, 2, 0, 3)); // (T,d,H,N)
 
-    ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                     // (T,T,H)
+    ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                     // (T,T,H,N)
     kq = ggml_soft_max(ctx, ggml_scale(ctx, kq, 1.0f / sqrtf((float) hd)));
-    ggml_tensor * kqv = ggml_mul_mat(ctx, v, kq);                   // (d,T,H)
-    kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));       // (d,H,T)
-    kqv = ggml_reshape_2d(ctx, kqv, C, T);                          // (C, T)
+    ggml_tensor * kqv = ggml_mul_mat(ctx, v, kq);                   // (d,T,H,N)
+    kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));       // (d,H,T,N)
+    kqv = ggml_reshape_3d(ctx, kqv, C, T, N);                       // (C, T, N)
 
-    ggml_tensor * out = linear(m, kqv, pre + ".to_out.0");          // (C, T)
-    out = ggml_cont(ctx, ggml_transpose(ctx, out));                 // (T, C)
-    out = ggml_reshape_4d(ctx, out, W, H, C, 1);
+    ggml_tensor * out = linear(m, kqv, pre + ".to_out.0");          // (C, T, N)
+    out = ggml_cont(ctx, ggml_permute(ctx, out, 1, 0, 2, 3));       // (T, C, N)
+    out = ggml_reshape_4d(ctx, out, W, H, C, N);
     return ggml_add(ctx, out, x);
 }
