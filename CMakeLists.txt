@@ -6,11 +6,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_subdirectory(ggml)
 
-add_executable(test_trans_vae src/test_trans_vae.cpp)
-target_link_libraries(test_trans_vae PRIVATE ggml)
+add_library(seethrough STATIC
+    src/ops.cpp
+    src/vae.cpp
+)
+target_link_libraries(seethrough PUBLIC ggml)
+target_include_directories(seethrough PUBLIC src)
 
-add_executable(test_sd_vae src/test_sd_vae.cpp)
-target_link_libraries(test_sd_vae PRIVATE ggml)
-
-add_executable(test_trans_vae_full src/test_trans_vae_full.cpp)
-target_link_libraries(test_trans_vae_full PRIVATE ggml)
+foreach(t test_trans_vae test_sd_vae test_trans_vae_full)
+    add_executable(${t} src/${t}.cpp)
+    target_link_libraries(${t} PRIVATE seethrough)
+endforeach()
