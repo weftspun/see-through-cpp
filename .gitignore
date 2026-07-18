@@ -11,3 +11,5 @@ build*/
 *.psd
 *.psd.json
 assets_sample_synth.png
+sample_run*.log
+assets/

@@ -102,10 +102,17 @@ ggml_tensor * bias4d(ggml_context * ctx, ggml_tensor * b) {
 
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int stride, int pad) {
     ggml_context * ctx = m.ctx_g;
+    ggml_tensor * w = m.get(pre + ".weight");
+    // low-VRAM mode: direct conv — the im2col transients dominate the 1280px
+    // graph (up to 5.7GB each)
+    if (m.spatial_chunk) {
+        ggml_tensor * r = ggml_conv_2d_direct(ctx, w, x, stride, stride, pad, pad, 1, 1);
+        if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
+        return r;
+    }
     // ggml_conv_2d unconditionally rounds activations to f16 in im2col; for
     // f32 weights (SDXL VAE encoder has activations too large for that) keep
     // the whole conv in f32 instead
-    ggml_tensor * w = m.get(pre + ".weight");
     ggml_type it = w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
     ggml_tensor * im = ggml_im2col(ctx, w, x, stride, stride, pad, pad, 1, 1, true, it);
     ggml_tensor * r = ggml_mul_mat(ctx,
