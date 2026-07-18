@@ -24,6 +24,11 @@ struct Model {
     float gn_eps    = 1e-6f;
     int   head_dim  = 0;      // spatial attn: 0 = one head of dim C
 
+    Model() = default;
+    Model(const Model &) = delete;
+    Model & operator=(const Model &) = delete;
+    ~Model();                            // frees weight contexts + backend buffers
+
     bool load(const char * path);        // merge tensors from a gguf (host RAM)
     // load into a backend buffer (e.g. Vulkan VRAM); pass the buffer type
     // from ggml_backend_get_default_buffer_type(backend)

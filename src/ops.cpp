@@ -9,6 +9,11 @@
 #include <cstdlib>
 #include <cstring>
 
+Model::~Model() {
+    for (ggml_backend_buffer * b : bufs) ggml_backend_buffer_free(b);
+    for (ggml_context * c : ctx_w) ggml_free(c);
+}
+
 bool Model::load(const char * path) {
     ggml_context * c = nullptr;
     gguf_init_params gp = { /*no_alloc*/ false, /*ctx*/ &c };

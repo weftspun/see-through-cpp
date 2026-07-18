@@ -59,11 +59,13 @@ int main(int argc, char ** argv) {
         else if (a == "--res") cfg.res = std::stoi(next());
         else if (a == "--depth-res") cfg.depth_res = std::stoi(next());
         else if (a == "--threads") cfg.threads = std::stoi(next());
+        else if (a == "--device") cfg.device = next();
         else { fprintf(stderr, "unknown arg %s\n", a.c_str()); return 1; }
     }
     if (in_path.empty()) {
         fprintf(stderr, "usage: see-through -m <model-dir> -i in.png -o out.psd "
-                        "[--seed N] [--steps N] [--res N] [--depth-res N] [--threads N]\n");
+                        "[--seed N] [--steps N] [--res N] [--depth-res N] [--threads N] "
+                        "[--device cpu|vulkan]\n");
         return 1;
     }
     setvbuf(stdout, nullptr, _IONBF, 0);

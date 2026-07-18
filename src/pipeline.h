@@ -21,6 +21,7 @@ struct PipelineConfig {
     uint64_t seed = 42;
     int  threads = 8;
     bool verbose = true;
+    std::string device = "cpu";   // "cpu" | "vulkan" (first GPU in the registry)
 };
 
 // tags (fixed v3 vocabulary)

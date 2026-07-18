@@ -40,7 +40,58 @@ static std::string kv_by_suffix(const Model & m, const char * suf) {
     return "";
 }
 
+static ggml_backend_dev_t pipe_gpu(const PipelineConfig & cfg) {
+    if (cfg.device == "cpu") return nullptr;
+    return ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+}
+
+static ggml_backend_t pipe_backend(const PipelineConfig & cfg) {
+    ggml_backend_dev_t d = pipe_gpu(cfg);
+    if (d) return ggml_backend_dev_init(d, nullptr);
+    ggml_backend_t b = ggml_backend_cpu_init();
+    ggml_backend_cpu_set_n_threads(b, cfg.threads);
+    return b;
+}
+
+static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string & path) {
+    ggml_backend_dev_t d = pipe_gpu(cfg);
+    if (d) return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
+    return m.load(path.c_str());
+}
+
 // one-shot graph: build outputs, set inputs, compute, read all outputs, free
+template <typename Build, typename SetInputs>
+static bool run_graph_dev(const PipelineConfig & cfg, Model & m, size_t max_nodes,
+                          Build build, SetInputs set_inputs,
+                          std::vector<std::vector<float>> & outs) {
+    size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
+    ggml_init_params ip = { meta, nullptr, true };
+    m.ctx_g = ggml_init(ip);
+    std::vector<ggml_tensor *> out_t = build();
+    for (ggml_tensor * t : out_t) ggml_set_output(t);
+    ggml_backend_t backend = pipe_backend(cfg);
+    ggml_cgraph * gf = ggml_new_graph_custom(m.ctx_g, max_nodes, false);
+    for (ggml_tensor * t : out_t) ggml_build_forward_expand(gf, t);
+    ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+    bool ok = ggml_gallocr_alloc_graph(alloc, gf);
+    if (ok) {
+        set_inputs();
+        ok = ggml_backend_graph_compute(backend, gf) == GGML_STATUS_SUCCESS;
+    }
+    if (ok) {
+        outs.resize(out_t.size());
+        for (size_t i = 0; i < out_t.size(); i++) {
+            outs[i].resize(ggml_nelements(out_t[i]));
+            ggml_backend_tensor_get(out_t[i], outs[i].data(), 0, outs[i].size() * 4);
+        }
+    }
+    ggml_gallocr_free(alloc);
+    ggml_backend_free(backend);
+    ggml_free(m.ctx_g);
+    m.ctx_g = nullptr;
+    return ok;
+}
+
 template <typename Build, typename SetInputs>
 static bool run_graph(Model & m, size_t max_nodes, int threads, Build build,
                       SetInputs set_inputs, std::vector<std::vector<float>> & outs) {
@@ -86,7 +137,7 @@ bool encode_tags(const PipelineConfig & cfg, const std::vector<std::string> & ta
     for (int enc = 0; enc < 2; enc++) {
         Model m;
         std::string path = cfg.model_dir + (enc == 0 ? "/layerdiff-te1.gguf" : "/layerdiff-te2.gguf");
-        if (!m.load(path.c_str())) { fprintf(stderr, "failed to load %s\n", path.c_str()); return false; }
+        if (!pipe_load(cfg, m, path)) { fprintf(stderr, "failed to load %s\n", path.c_str()); return false; }
         ClipTokenizer tok;
         if (!tok.load(kv_by_suffix(m, ".vocab_json"), kv_by_suffix(m, ".merges_txt"))) return false;
         ClipParams p = clip_params_from_config(kv_by_suffix(m, ".config_json"));
@@ -99,7 +150,7 @@ bool encode_tags(const PipelineConfig & cfg, const std::vector<std::string> & ta
             std::vector<int32_t> ids = tok.encode_padded(tags[f], 77, pad_id, &eos_pos);
             ggml_tensor * ids_t = nullptr;
             std::vector<std::vector<float>> outs;
-            bool ok = run_graph(m, 8192, cfg.threads,
+            bool ok = run_graph_dev(cfg, m, 8192,
                 [&]() {
                     ids_t = ggml_new_tensor_1d(m.ctx_g, GGML_TYPE_I32, 77);
                     ggml_set_input(ids_t);
@@ -142,7 +193,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
     {
         Model mv;
         std::string p = cfg.model_dir + "/layerdiff-vae.gguf";
-        if (!mv.load(p.c_str())) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
+        if (!pipe_load(cfg, mv, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
         std::vector<float> feed((size_t) RES * RES * 3);
         for (size_t i = 0; i < (size_t) RES * RES; i++) {
             for (int c = 0; c < 3; c++) {
@@ -151,7 +202,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         }
         ggml_tensor * x = nullptr;
         std::vector<std::vector<float>> outs;
-        bool ok = run_graph(mv, 4096, cfg.threads,
+        bool ok = run_graph_dev(cfg, mv, 4096,
             [&]() {
                 x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
                 ggml_set_input(x);
@@ -181,7 +232,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
     {
         Model m;
         std::string p = cfg.model_dir + "/layerdiff-unet.gguf";
-        if (!m.load(p.c_str())) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
+        if (!pipe_load(cfg, m, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
 
         size_t max_nodes = 16384;
         size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
@@ -205,8 +256,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs2);
         ggml_set_output(out);
 
-        ggml_backend_t backend = ggml_backend_cpu_init();
-        ggml_backend_cpu_set_n_threads(backend, cfg.threads);
+        ggml_backend_t backend = pipe_backend(cfg);
         ggml_cgraph * gf = ggml_new_graph_custom(ctx, max_nodes, false);
         ggml_build_forward_expand(gf, out);
         ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
@@ -250,7 +300,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         Model mv;
         std::string p1 = cfg.model_dir + "/layerdiff-vae.gguf";
         std::string p2 = cfg.model_dir + "/trans-vae.gguf";
-        if (!mv.load(p1.c_str()) || !mv.load(p2.c_str())) return false;
+        if (!pipe_load(cfg, mv, p1) || !pipe_load(cfg, mv, p2)) return false;
 
         layers_out.assign(F, Image{});
         for (int f = 0; f < F; f++) {
@@ -258,7 +308,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
             ggml_tensor * zt = nullptr;
             std::vector<std::vector<float>> outs;
-            bool ok = run_graph(mv, 32768, cfg.threads,
+            bool ok = run_graph_dev(cfg, mv, 32768,
                 [&]() {
                     zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
@@ -298,7 +348,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
     {
         Model mv;
         std::string p = cfg.model_dir + "/marigold-vae.gguf";
-        if (!mv.load(p.c_str())) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
+        if (!pipe_load(cfg, mv, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
 
         auto encode_one = [&](const Image & argb, std::vector<float> & out_lat) -> bool {
             Image im = argb;
@@ -312,7 +362,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
             }
             ggml_tensor * x = nullptr;
             std::vector<std::vector<float>> outs;
-            bool ok = run_graph(mv, 4096, cfg.threads,
+            bool ok = run_graph_dev(cfg, mv, 4096,
                 [&]() {
                     x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
                     ggml_set_input(x);
@@ -341,14 +391,14 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
     {
         Model m;
         std::string p = cfg.model_dir + "/marigold-te.gguf";
-        if (!m.load(p.c_str())) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
+        if (!pipe_load(cfg, m, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
         ClipTokenizer tok;
         if (!tok.load(kv_by_suffix(m, ".vocab_json"), kv_by_suffix(m, ".merges_txt"))) return false;
         ClipParams p2 = clip_params_from_config(kv_by_suffix(m, ".config_json"));
         std::vector<int32_t> ids = { tok.bos_id, tok.eos_id };
         ggml_tensor * ids_t = nullptr;
         std::vector<std::vector<float>> outs;
-        bool ok = run_graph(m, 8192, cfg.threads,
+        bool ok = run_graph_dev(cfg, m, 8192,
             [&]() {
                 ids_t = ggml_new_tensor_1d(m.ctx_g, GGML_TYPE_I32, 2);
                 ggml_set_input(ids_t);
@@ -374,7 +424,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
     {
         Model m;
         std::string p = cfg.model_dir + "/marigold-unet.gguf";
-        if (!m.load(p.c_str())) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
+        if (!pipe_load(cfg, m, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
         size_t max_nodes = 16384;
         size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
         ggml_init_params ip = { meta, nullptr, true };
@@ -390,8 +440,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs_t);
         ggml_set_output(out);
 
-        ggml_backend_t backend = ggml_backend_cpu_init();
-        ggml_backend_cpu_set_n_threads(backend, cfg.threads);
+        ggml_backend_t backend = pipe_backend(cfg);
         ggml_cgraph * gf = ggml_new_graph_custom(ctx, max_nodes, false);
         ggml_build_forward_expand(gf, out);
         ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
@@ -428,14 +477,14 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
     {
         Model mv;
         std::string p = cfg.model_dir + "/marigold-vae.gguf";
-        if (!mv.load(p.c_str())) return false;
+        if (!pipe_load(cfg, mv, p)) return false;
         depths_out.assign(F, Image{});
         for (int f = 0; f < F; f++) {
             std::vector<float> z(DZ);
             for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
             ggml_tensor * zt = nullptr;
             std::vector<std::vector<float>> outs;
-            bool ok = run_graph(mv, 8192, cfg.threads,
+            bool ok = run_graph_dev(cfg, mv, 8192,
                 [&]() {
                     zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
@@ -470,7 +519,7 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg) {
     int threads = cfg.threads;
     return [model, path, threads](const Image & rgb, const std::vector<uint8_t> & mask) -> Image {
         if (model->weights.empty() && !model->load(path.c_str())) {
-            fprintf(stderr, "failed to load %s — skipping inpaint\n", path.c_str());
+            fprintf(stderr, "failed to load %s â€” skipping inpaint\n", path.c_str());
             return rgb;
         }
         // upstream inpaint_preprocess: resize <=1024 stride 64, square pad
