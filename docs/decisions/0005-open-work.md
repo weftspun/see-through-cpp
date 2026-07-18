@@ -23,8 +23,9 @@ everything still open; items move to 0004's Completed list as they land on
 - [ ] Upstream parity: `inference_psd.py --save_to_psd` on the same
       seed/input; per-layer alpha-mask IoU (>0.98 where tags match) + depth
       ordering
-- [ ] Investigate `load` vs `load_backend` tensor-count difference
-      (249 vs 248 on marigold-vae; likely benign duplicate name)
+- [x] `load` vs `load_backend` count difference: benign — the gguf holds
+      exactly 248 unique tensors; the host-path count includes ggml's
+      internal data-blob tensor
 
 ### Hardening
 
@@ -32,9 +33,9 @@ everything still open; items move to 0004's Completed list as they land on
       `test_psd` + `check_psd.py` byte-exact gate; delete the minimal writer
       once green. Also write a real (layer-composited) merged preview so
       viewers don't echo the input page.
-- [ ] Property tests linked in the Vulkan build tree (rapidcheck target
-      there still fails to link; reconfigure/rebuild once no process locks
-      the ggml DLLs)
+- [ ] Property tests linked in the Vulkan build tree (rapidcheck now forced
+      static there; final link blocked only by the running pipeline's DLL
+      locks — rebuild after it exits)
 
 ### Repo layout
 
@@ -44,15 +45,9 @@ everything still open; items move to 0004's Completed list as they land on
 
 ### Documentation / upstream
 
-- [ ] README: low-VRAM knobs (direct conv is UNet-only — wrong for the VAE
-      encoder s2/p0 path and silently zero on Vulkan >= ~1280^2, hence the
-      row-chunked im2col decode), GPU-primary usage incl. `build-vulkan/bin`
-      on PATH, `--png-dir`, subtree vendoring policy
-- [ ] Minimal repro + issue text for ggml upstream:
-      (a) gallocr recycles INPUT tensor buffers after their last in-graph
-      read — all inputs must be re-set before every compute of a reused
-      graph; (b) CPU flash_attn_ext diverges ~0.3 from naive attention for
-      n_head >= 2 (single-head agrees to f16 precision; Vulkan agrees);
-      (c) Vulkan ggml_conv_2d_direct silently returns zeros at very large
-      spatial sizes (>= ~1280^2; correct at <= 512^2)
+- [x] README: GPU-primary usage, --png-dir/--debug-dir, low-VRAM knob
+      notes, subtree vendoring policy
+- [x] ggml upstream findings written up with local repros:
+      docs/ggml-upstream-issues.md (gallocr input recycling, CPU multi-head
+      flash divergence, Vulkan direct-conv zeros)
 - [ ] Post-MVP (original plan): C ABI + server, trellis2cpp-style

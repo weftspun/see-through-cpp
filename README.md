@@ -43,7 +43,11 @@ It produces `out.psd` (depth-ordered RGBA layers), `out_depth.psd` and
 [v0.0.1-dev release](../../releases/tag/v0.0.1-dev); files >2GB are
 zstd-compressed split parts (`cat parts | zstd -d -o file.gguf`).
 
-Remaining: Vulkan backend (M13); CPU-only today.
+GPU (Vulkan) is the primary target — the CLI and tests pick the first
+registry GPU automatically (`--device cpu` / `SEETHROUGH_DEVICE=cpu` force
+the fallback). Run Vulkan binaries with `build-vulkan/bin` on PATH (shared
+ggml). `--png-dir <dir>` additionally exports per-layer RGBA + depth PNGs in
+z order with a `layers.json` manifest; `--debug-dir <dir>` dumps stage stats.
 
 ## Port notes (documented divergences)
 
@@ -62,6 +66,13 @@ Remaining: Vulkan backend (M13); CPU-only today.
   `layerdiff-te1.gguf` are f32 for the same reason.
 - ggml's gallocr recycles **input** tensor buffers after their last in-graph
   read — every input is re-set before every compute in multi-step loops.
+- Low-VRAM knobs at 1280px/24GB: flash attention + per-frame spatial
+  transformer chunking + f16 skips + `ggml_conv_2d_direct` for the UNets;
+  the decode uses exact im2col tiled over output rows instead (direct conv
+  is wrong for the VAE-encoder s2/p0 path and silently zero on Vulkan at
+  >= ~1280^2 — both tracked for upstream, see docs/ggml-upstream-issues.md).
+- Dependencies are vendored as squashed git subtrees (ggml, psd_sdk,
+  rapidcheck): update via `git subtree pull --prefix <dir> <url> <ref> --squash`.
 
 ## GGUF conversion
 
