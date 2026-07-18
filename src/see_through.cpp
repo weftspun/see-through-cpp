@@ -5,7 +5,6 @@
 //               [--seed N] [--steps N] [--res N] [--depth-res N] [--threads N]
 
 #include "pipeline.h"
-#include "psd_writer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -47,7 +46,7 @@ static bool bbox_alpha(const Image & img, float thr, int * x, int * y, int * w, 
 
 int main(int argc, char ** argv) {
     PipelineConfig cfg;
-    std::string in_path, out_path = "out.psd", png_dir;
+    std::string in_path, out_path = "out.svg", png_dir;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() { return std::string(argv[++i]); };
@@ -279,81 +278,50 @@ int main(int argc, char ** argv) {
     std::sort(ordered.begin(), ordered.end(),
               [](const Part * a, const Part * b) { return a->depth_median > b->depth_median; });
 
-    auto to_layers = [&](bool depth_mode) {
-        std::vector<PsdLayer> ls;
-        for (const Part * p : ordered) {
-            PsdLayer l;
-            l.name = p->tag;
-            l.left = p->xyxy[0]; l.top = p->xyxy[1];
-            l.w = p->img.w; l.h = p->img.h;
-            l.rgba.resize((size_t) l.w * l.h * 4);
-            for (size_t i = 0; i < (size_t) l.w * l.h; i++) {
-                if (depth_mode) {
-                    uint8_t d = (uint8_t) std::lround(std::min(1.0f, std::max(0.0f, p->depth.data[i])) * 255.0f);
-                    l.rgba[i * 4] = l.rgba[i * 4 + 1] = l.rgba[i * 4 + 2] = d;
-                    l.rgba[i * 4 + 3] = 255;
-                } else {
-                    for (int c = 0; c < 4; c++) {
-                        l.rgba[i * 4 + c] = (uint8_t) std::lround(
-                            std::min(1.0f, std::max(0.0f, p->img.data[i * 4 + c])) * 255.0f);
-                    }
-                }
-            }
-            ls.push_back(std::move(l));
+    // layered SVG: document order = z order (back to front); depth maps in
+    // a hidden group; tag/depth_median/xyxy carried as data- attributes
+    auto b64 = [](const std::vector<uint8_t> & d) {
+        static const char * T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string o;
+        o.reserve((d.size() + 2) / 3 * 4);
+        for (size_t i = 0; i < d.size(); i += 3) {
+            uint32_t v = d[i] << 16 | (i + 1 < d.size() ? d[i + 1] << 8 : 0)
+                       | (i + 2 < d.size() ? d[i + 2] : 0);
+            o += T[v >> 18]; o += T[(v >> 12) & 63];
+            o += i + 1 < d.size() ? T[(v >> 6) & 63] : '=';
+            o += i + 2 < d.size() ? T[v & 63] : '=';
         }
-        return ls;
+        return o;
     };
-
-    std::vector<uint8_t> composite((size_t) RES * RES * 4);
-    for (size_t i = 0; i < (size_t) RES * RES; i++) {
-        for (int c = 0; c < 4; c++) {
-            composite[i * 4 + c] = (uint8_t) std::lround(fullpage.data[i * 4 + c] * 255.0f);
-        }
+    std::ofstream svg(out_path);
+    svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" "
+        << "xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"" << RES
+        << "\" height=\"" << RES << "\">\n";
+    int zi = 0;
+    for (const Part * p : ordered) {
+        std::string png = b64(encode_png(p->img));
+        svg << "  <image x=\"" << p->xyxy[0] << "\" y=\"" << p->xyxy[1]
+            << "\" width=\"" << p->img.w << "\" height=\"" << p->img.h
+            << "\" data-tag=\"" << p->tag << "\" data-z=\"" << zi
+            << "\" data-depth-median=\"" << p->depth_median
+            << "\" xlink:href=\"data:image/png;base64," << png << "\"/>\n";
+        zi++;
     }
-    if (!write_psd(out_path, RES, RES, to_layers(false), composite)) {
-        fprintf(stderr, "failed to write %s\n", out_path.c_str());
-        return 1;
+    svg << "  <g id=\"depth\" display=\"none\">\n";
+    zi = 0;
+    for (const Part * p : ordered) {
+        Image d1;
+        d1.w = p->depth.w; d1.h = p->depth.h; d1.c = 1;
+        d1.data = p->depth.data;
+        svg << "    <image x=\"" << p->xyxy[0] << "\" y=\"" << p->xyxy[1]
+            << "\" width=\"" << d1.w << "\" height=\"" << d1.h
+            << "\" data-tag=\"" << p->tag << "\" data-z=\"" << zi
+            << "\" xlink:href=\"data:image/png;base64," << b64(encode_png(d1))
+            << "\"/>\n";
+        zi++;
     }
-    std::string depth_path = out_path.substr(0, out_path.rfind('.')) + "_depth.psd";
-    write_psd(depth_path, RES, RES, to_layers(true), composite);
-
-    // separate per-layer PNGs in paint order (00 = backmost), depth PNGs and
-    // a z-order manifest
-    if (!png_dir.empty()) {
-        std::ofstream mj(png_dir + "/layers.json");
-        mj << "[";
-        int zi = 0;
-        for (const Part * p : ordered) {
-            char nn[8];
-            snprintf(nn, sizeof(nn), "%02d", zi);
-            std::string base = std::string(nn) + "_" + p->tag;
-            save_image(png_dir + "/" + base + ".png", p->img);
-            Image d1;
-            d1.w = p->depth.w; d1.h = p->depth.h; d1.c = 1;
-            d1.data = p->depth.data;
-            save_image(png_dir + "/" + base + "_depth.png", d1);
-            mj << (zi ? "," : "") << "\n  {\"z\":" << zi << ",\"tag\":\"" << p->tag
-               << "\",\"file\":\"" << base << ".png\",\"xyxy\":[" << p->xyxy[0] << ","
-               << p->xyxy[1] << "," << p->xyxy[2] << "," << p->xyxy[3]
-               << "],\"depth_median\":" << p->depth_median << "}";
-            zi++;
-        }
-        mj << "\n]\n";
-        printf("wrote %d layer PNGs to %s\n", zi, png_dir.c_str());
-    }
-
-    // sidecar json
-    std::ofstream js(out_path + ".json");
-    js << "{\"parts\":{";
-    for (size_t i = 0; i < ordered.size(); i++) {
-        const Part * p = ordered[i];
-        js << (i ? "," : "") << "\"" << p->tag << "\":{\"xyxy\":[" << p->xyxy[0] << ","
-           << p->xyxy[1] << "," << p->xyxy[2] << "," << p->xyxy[3]
-           << "],\"depth_median\":" << p->depth_median << "}";
-    }
-    js << "},\"frame_size\":[" << RES << "," << RES << "]}\n";
-
-    printf("wrote %s (%zu layers), %s, %s\n", out_path.c_str(), ordered.size(),
+    svg << "  </g>\n</svg>\n";
+    printf("wrote %s (%zu layers)\n", out_path.c_str(), ordered.size());
            depth_path.c_str(), (out_path + ".json").c_str());
     return 0;
 }

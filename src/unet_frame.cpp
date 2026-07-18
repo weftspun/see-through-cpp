@@ -98,46 +98,10 @@ ggml_tensor * transformer3d(Model & m, ggml_tensor * x, ggml_tensor * ehs,
     int n_temporal = 0;
     for (int l = 0; l < n_layers; l++) {
         const std::string bpre = pre + ".transformer_blocks." + std::to_string(l);
-        static bool chunk_logged = false;
-        if (m.spatial_chunk && !chunk_logged) {
-            fprintf(stderr, "[unet] spatial transformer blocks chunked per frame\n");
-            chunk_logged = true;
-        }
-        if (m.spatial_chunk && F > 1) {
-            // per-frame to cap peak activation memory; frames are independent
-            // in the spatial blocks
-            ggml_tensor * acc = nullptr;
-            for (int64_t f = 0; f < F; f++) {
-                ggml_tensor * hf = ggml_view_3d(ctx, h, h->ne[0], h->ne[1], 1,
-                                                h->nb[1], h->nb[2], f * h->nb[2]);
-                ggml_tensor * ef = ggml_view_3d(ctx, ehs, ehs->ne[0], ehs->ne[1], 1,
-                                                ehs->nb[1], ehs->nb[2], f * ehs->nb[2]);
-                ggml_tensor * of = basic_transformer_block(m, ggml_cont(ctx, hf), ef,
-                                                           bpre, n_head);
-                acc = acc ? ggml_concat(ctx, acc, of, 2) : of;
-            }
-            h = acc;
-        } else {
-            h = basic_transformer_block(m, h, ehs, bpre, n_head);
-        }
+        h = basic_transformer_block(m, h, ehs, bpre, n_head);
         if ((l + 1) % stride == 0) {
             const std::string tpre = pre + ".temporal_transformer_blocks." + std::to_string(n_temporal++);
-            if (m.spatial_chunk && h->ne[1] >= 4096) {
-                // chunk over tokens (cross-frame attention is per-token-column,
-                // so the token dim is a pure batch dim)
-                const int64_t S = h->ne[1], NCH = 4, CS = (S + NCH - 1) / NCH;
-                ggml_tensor * acc = nullptr;
-                for (int64_t s0 = 0; s0 < S; s0 += CS) {
-                    int64_t sn = std::min(CS, S - s0);
-                    ggml_tensor * hs = ggml_cont(ctx, ggml_view_3d(ctx, h, h->ne[0], sn, F,
-                                                 h->nb[1], h->nb[2], s0 * h->nb[1]));
-                    ggml_tensor * ms = cross_frame_block(m, hs, tpre, n_head);
-                    acc = acc ? ggml_concat(ctx, acc, ms, 1) : ms;
-                }
-                h = ggml_add(ctx, h, acc);
-            } else {
-                h = ggml_add(ctx, h, cross_frame_block(m, h, tpre, n_head));
-            }
+            h = ggml_add(ctx, h, cross_frame_block(m, h, tpre, n_head));
         }
     }
 
@@ -184,9 +148,7 @@ ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * 
     sample = conv2d(m, sample, "conv_in");
     if (taps) taps->push_back(sample);
 
-    std::vector<ggml_tensor *> res_stack = {
-        m.spatial_chunk ? ggml_cast(ctx, sample, GGML_TYPE_F16) : sample
-    };
+    std::vector<ggml_tensor *> res_stack = { sample };
     char pre[96];
     for (int i = 0; ; i++) {
         snprintf(pre, sizeof(pre), "down_blocks.%d", i);
@@ -197,12 +159,12 @@ ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * 
             sample = resnet_block(m, sample, pre, emb);
             snprintf(pre, sizeof(pre), "down_blocks.%d.attentions.%d", i, r);
             sample = maybe_t3d(m, sample, ehs, pre);
-            res_stack.push_back(m.spatial_chunk ? ggml_cast(ctx, sample, GGML_TYPE_F16) : sample);
+            res_stack.push_back(sample);
         }
         snprintf(pre, sizeof(pre), "down_blocks.%d.downsamplers.0.conv", i);
         if (m.has(std::string(pre) + ".weight")) {
             sample = conv2d(m, sample, pre, 2, 1);
-            res_stack.push_back(m.spatial_chunk ? ggml_cast(ctx, sample, GGML_TYPE_F16) : sample);
+            res_stack.push_back(sample);
         }
         if (taps) taps->push_back(sample);
     }
@@ -219,7 +181,6 @@ ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * 
             snprintf(pre, sizeof(pre), "up_blocks.%d.resnets.%d", i, r);
             if (!m.has(std::string(pre) + ".norm1.weight")) break;
             ggml_tensor * res = res_stack.back(); res_stack.pop_back();
-            if (res->type == GGML_TYPE_F16) res = ggml_cast(ctx, res, GGML_TYPE_F32);
             sample = ggml_concat(ctx, sample, res, 2);
             sample = resnet_block(m, sample, pre, emb);
             snprintf(pre, sizeof(pre), "up_blocks.%d.attentions.%d", i, r);

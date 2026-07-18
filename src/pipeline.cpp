@@ -59,7 +59,6 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
     if (d) {
         if (unet) {
             m.flash_attn = true;    // naive 80x80 spatial attention is ~21GB at 1280px
-            m.spatial_chunk = true; // direct conv + per-frame transformers cap peak
             m.direct_conv = true;
         }                           // VRAM; NOT for VAEs: ggml_conv_2d_direct is
                                     // wrong for the encoder s2/p0 downsample path

@@ -87,6 +87,12 @@ static std::vector<float> run1(Fixture & fx, size_t max_nodes,
     return res;
 }
 
+static double max_amp(const std::vector<float> & a) {
+    double m = 1.0;
+    for (float v : a) m = std::max(m, (double) fabs(v));
+    return m;
+}
+
 static double max_diff(const std::vector<float> & a, const std::vector<float> & b) {
     if (a.empty() || a.size() != b.size()) return 1e9;
     double mx = 0;
@@ -182,13 +188,11 @@ int main() {
             fx.m.flash_attn = false;
             return r;
         };
-        // flash casts k/v to f16; synthetic N(0,0.5) weights amplify
-        // activations well beyond trained-network scale, so the bound is
-        // looser than the reference gates (worst observed ~5.6e-2)
-        double d = max_diff(variant(false), variant(true));
-        if (d >= 1.5e-1) printf("   flash-vs-naive diff: %.6f (C=%d H=%d Tq=%d Tk=%d B=%d)\n",
-                                d, C, heads, Tq, Tk, B);
-        RC_ASSERT(d < 1.5e-1);
+        // flash casts k/v to f16: error scales with activation magnitude
+        auto vn = variant(false);
+        auto vf = variant(true);
+        double d = max_diff(vn, vf) / max_amp(vn);
+        RC_ASSERT(d < 2e-2);
     });
 
     prop("graph reuse with re-set inputs matches fresh graph", []() {
@@ -259,6 +263,39 @@ int main() {
             printf("   %dx%dx%d s%d: direct vs im2col %.6f %s\n", cs.W, cs.H, cs.C,
                    cs.stride, d, d < 5e-2 ? "ok" : "FAIL");
             if (d >= 5e-2) failures++;
+        }
+    }
+
+    // fixed production-scale flash probe: the 1280px UNet runs flash at
+    // Tq=Tk=6400 (80x80 tokens); the M5 gate only covered 4096
+    if (gpu) {
+        printf("-- production-scale: flash vs naive at large token counts --\n");
+        for (int T : { 1600, 4096, 6400 }) {
+            Fixture fx;
+            const int heads = 10, C = 64 * heads;
+            for (const char * n : { "a.to_q", "a.to_k", "a.to_v", "a.to_out.0" }) {
+                fx.weight((std::string(n) + ".weight").c_str(), { C, C });
+            }
+            fx.weight("a.to_out.0.bias", { C });
+            std::vector<float> q = fx.randvec((size_t) C * T);
+            auto variant = [&](bool flash) {
+                fx.m.flash_attn = flash;
+                ggml_tensor * qt = nullptr;
+                auto r = run1(fx, 4096,
+                    [&]() {
+                        qt = ggml_new_tensor_3d(fx.m.ctx_g, GGML_TYPE_F32, C, T, 1);
+                        ggml_set_input(qt);
+                        return attn_tokens(fx.m, qt, qt, "a", heads);
+                    },
+                    [&]() { ggml_backend_tensor_set(qt, q.data(), 0, q.size() * 4); });
+                fx.m.flash_attn = false;
+                return r;
+            };
+            auto vn = variant(false), vf = variant(true);
+            double d = max_diff(vn, vf);
+            printf("   T=%d heads=%d: flash vs naive %.6f %s\n", T, heads, d,
+                   d < 1.5e-1 ? "ok" : "FAIL");
+            if (d >= 2e-2) failures++;
         }
     }
 

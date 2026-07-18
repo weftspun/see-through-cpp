@@ -44,3 +44,21 @@ rather than asserting.)
 
 Repro: `tests/test_graph_properties.cpp`, fixed regression block
 "direct conv at 1280^2 is not zero" (run with a Vulkan build).
+
+## Remediation policy
+
+For any ggml kernel defect that blocks production and has no reasonable
+op-composition workaround, the fix is a custom GPU kernel written in Slang
+(compiled to SPIR-V, dispatched through ggml custom ops on the Vulkan
+backend). Escalation ladder:
+
+1. Compose the computation from validated ggml ops (used for: row-chunked
+   im2col replacing the defective large-size Vulkan direct conv).
+2. If composition is impossible or too slow for the throughput target,
+   write a Slang kernel for exactly the defective op, gated by the same
+   property probes as the op it replaces.
+
+Currently nothing qualifies for step 2: the gallocr input-recycling issue
+is allocator behavior (kernel-independent), CPU flash divergence is outside
+the production path (GPU-primary), and the Vulkan direct-conv defect is
+covered by step 1.

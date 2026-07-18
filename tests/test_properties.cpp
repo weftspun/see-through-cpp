@@ -8,7 +8,6 @@
 #include "image_utils.h"
 #include "clip.h"
 #include "postproc.h"
-#include "psd_writer.h"
 #include "scheduler.h"
 
 #include <rapidcheck.h>
@@ -25,33 +24,9 @@ static void prop(const char * name, Fn fn) {
     if (!rc::check(name, fn)) failures++;
 }
 
-// PackBits decoder (trivial, test-only)
-static std::vector<uint8_t> unpackbits(const std::vector<uint8_t> & in, int n) {
-    std::vector<uint8_t> out;
-    size_t i = 0;
-    while (i < in.size() && (int) out.size() < n) {
-        int8_t h = (int8_t) in[i++];
-        if (h >= 0) {
-            for (int k = 0; k <= h; k++) out.push_back(in[i++]);
-        } else if (h != -128) {
-            uint8_t v = in[i++];
-            for (int k = 0; k < 1 - h; k++) out.push_back(v);
-        }
-    }
-    return out;
-}
 
 int main(int argc, char ** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
-
-    prop("packbits round-trips arbitrary rows", [](const std::vector<uint8_t> & row) {
-        RC_PRE(!row.empty());
-        std::vector<uint8_t> enc;
-        packbits(row.data(), (int) row.size(), enc);
-        RC_ASSERT(unpackbits(enc, (int) row.size()) == row);
-        // worst-case expansion bound: 1 header per 128 literals
-        RC_ASSERT(enc.size() <= row.size() + (row.size() + 127) / 128);
-    });
 
     prop("dpm timesteps strictly descending in [1,1000)", []() {
         const int n = *rc::gen::inRange(1, 60);

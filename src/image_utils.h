@@ -19,6 +19,8 @@ struct Image {
 
 bool  load_image(const std::string & path, Image & out, int channels = 4);
 bool  save_image(const std::string & path, const Image & img);
+// PNG-encode in memory (for data: URIs)
+std::vector<uint8_t> encode_png(const Image & img);
 
 // cv2.resize equivalents
 Image resize_linear(const Image & src, int tw, int th);

@@ -37,7 +37,7 @@ static bool st_load(Model & m, const char * path) {
     const char * fa = getenv("SEETHROUGH_FLASH");
     if (fa && fa[0] == '1') m.flash_attn = true;
     const char * ch = getenv("SEETHROUGH_CHUNK");
-    if (ch && ch[0] == '1') { m.spatial_chunk = true; m.direct_conv = true; }
+    if (ch && ch[0] == '1') m.direct_conv = true;
     const char * rw = getenv("SEETHROUGH_ROWCHUNK");
     if (rw && rw[0] == '1') m.conv_row_chunk = true;
     const char * dev = getenv("SEETHROUGH_DEVICE");

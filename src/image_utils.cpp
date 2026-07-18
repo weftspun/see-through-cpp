@@ -28,6 +28,21 @@ bool save_image(const std::string & path, const Image & img) {
     return stbi_write_png(path.c_str(), img.w, img.h, img.c, px.data(), img.w * img.c) != 0;
 }
 
+std::vector<uint8_t> encode_png(const Image & img) {
+    std::vector<uint8_t> px(img.data.size());
+    for (size_t i = 0; i < px.size(); i++) {
+        float v = img.data[i] * 255.0f;
+        px[i] = (uint8_t) std::min(255.0f, std::max(0.0f, std::round(v)));
+    }
+    std::vector<uint8_t> out;
+    auto sink = [](void * ctx, void * data, int size) {
+        auto * v = (std::vector<uint8_t> *) ctx;
+        v->insert(v->end(), (uint8_t *) data, (uint8_t *) data + size);
+    };
+    stbi_write_png_to_func(sink, &out, img.w, img.h, img.c, px.data(), img.w * img.c);
+    return out;
+}
+
 Image resize_linear(const Image & src, int tw, int th) {
     Image dst;
     dst.w = tw; dst.h = th; dst.c = src.c;

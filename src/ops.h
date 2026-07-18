@@ -24,9 +24,6 @@ struct Model {
     float gn_eps    = 1e-6f;
     int   head_dim  = 0;      // spatial attn: 0 = one head of dim C
     bool  flash_attn = false; // token attention via ggml_flash_attn_ext (GPU)
-    bool  spatial_chunk = false; // run spatial transformer blocks per frame
-                                 // (peak-VRAM reduction; cross-frame blocks
-                                 // always stay batched)
     bool  direct_conv = false;   // ggml_conv_2d_direct instead of im2col
                                  // (huge peak-VRAM win; WRONG for the VAE
                                  // encoder stride-2/pad-0 downsample path

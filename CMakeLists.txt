@@ -16,7 +16,6 @@ add_library(seethrough STATIC
     src/unet_frame.cpp
     src/scheduler.cpp
     src/lama.cpp
-    src/psd_writer.cpp
     src/image_utils.cpp
     src/postproc.cpp
     src/pipeline.cpp
@@ -39,7 +38,7 @@ if (SEETHROUGH_TESTS)
     target_link_libraries(test_graph_properties PRIVATE seethrough rapidcheck)
 endif()
 
-foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_unet_blocks test_unet_forward test_scheduler test_layerdiff_e2e test_ddim test_marigold_e2e test_lama test_psd graph_mem)
+foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_unet_blocks test_unet_forward test_scheduler test_layerdiff_e2e test_ddim test_marigold_e2e test_lama graph_mem)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE seethrough)
 endforeach()
