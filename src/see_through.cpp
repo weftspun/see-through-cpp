@@ -47,7 +47,7 @@ static bool bbox_alpha(const Image & img, float thr, int * x, int * y, int * w, 
 
 int main(int argc, char ** argv) {
     PipelineConfig cfg;
-    std::string in_path, out_path = "out.psd";
+    std::string in_path, out_path = "out.psd", png_dir;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() { return std::string(argv[++i]); };
@@ -61,6 +61,7 @@ int main(int argc, char ** argv) {
         else if (a == "--threads") cfg.threads = std::stoi(next());
         else if (a == "--device") cfg.device = next();
         else if (a == "--debug-dir") cfg.debug_dir = next();
+        else if (a == "--png-dir") png_dir = next();
         else { fprintf(stderr, "unknown arg %s\n", a.c_str()); return 1; }
     }
     if (in_path.empty()) {
@@ -315,6 +316,31 @@ int main(int argc, char ** argv) {
     }
     std::string depth_path = out_path.substr(0, out_path.rfind('.')) + "_depth.psd";
     write_psd(depth_path, RES, RES, to_layers(true), composite);
+
+    // separate per-layer PNGs in paint order (00 = backmost), depth PNGs and
+    // a z-order manifest
+    if (!png_dir.empty()) {
+        std::ofstream mj(png_dir + "/layers.json");
+        mj << "[";
+        int zi = 0;
+        for (const Part * p : ordered) {
+            char nn[8];
+            snprintf(nn, sizeof(nn), "%02d", zi);
+            std::string base = std::string(nn) + "_" + p->tag;
+            save_image(png_dir + "/" + base + ".png", p->img);
+            Image d1;
+            d1.w = p->depth.w; d1.h = p->depth.h; d1.c = 1;
+            d1.data = p->depth.data;
+            save_image(png_dir + "/" + base + "_depth.png", d1);
+            mj << (zi ? "," : "") << "\n  {\"z\":" << zi << ",\"tag\":\"" << p->tag
+               << "\",\"file\":\"" << base << ".png\",\"xyxy\":[" << p->xyxy[0] << ","
+               << p->xyxy[1] << "," << p->xyxy[2] << "," << p->xyxy[3]
+               << "],\"depth_median\":" << p->depth_median << "}";
+            zi++;
+        }
+        mj << "\n]\n";
+        printf("wrote %d layer PNGs to %s\n", zi, png_dir.c_str());
+    }
 
     // sidecar json
     std::ofstream js(out_path + ".json");
