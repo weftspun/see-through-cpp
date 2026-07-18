@@ -60,6 +60,7 @@ int main(int argc, char ** argv) {
         else if (a == "--depth-res") cfg.depth_res = std::stoi(next());
         else if (a == "--threads") cfg.threads = std::stoi(next());
         else if (a == "--device") cfg.device = next();
+        else if (a == "--debug-dir") cfg.debug_dir = next();
         else { fprintf(stderr, "unknown arg %s\n", a.c_str()); return 1; }
     }
     if (in_path.empty()) {

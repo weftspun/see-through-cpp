@@ -38,6 +38,8 @@ static bool st_load(Model & m, const char * path) {
     if (fa && fa[0] == '1') m.flash_attn = true;
     const char * ch = getenv("SEETHROUGH_CHUNK");
     if (ch && ch[0] == '1') { m.spatial_chunk = true; m.direct_conv = true; }
+    const char * rw = getenv("SEETHROUGH_ROWCHUNK");
+    if (rw && rw[0] == '1') m.conv_row_chunk = true;
     const char * dev = getenv("SEETHROUGH_DEVICE");
     if (dev && strcmp(dev, "vulkan") == 0) {
         ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);

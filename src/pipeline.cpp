@@ -221,6 +221,13 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             outs);
         if (!ok) return false;
         c_concat = std::move(outs[0]);
+        if (!cfg.debug_dir.empty()) {
+            double s = 0, s2 = 0;
+            for (float v : c_concat) { s += v; s2 += (double) v * v; }
+            double mu = s / c_concat.size();
+            printf("[debug] c_concat mean=%.4f std=%.4f\n", mu,
+                   sqrt(std::max(0.0, s2 / c_concat.size() - mu * mu)));
+        }
         if (cfg.verbose) printf("[layerdiff] page latent done\n");
     }
 
@@ -295,6 +302,13 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             ggml_backend_tensor_get(out, eps.data(), 0, D * 4);
             for (float & v : noise) v = nrm(rng);
             sch.step(lat, eps, noise);
+            if (!cfg.debug_dir.empty()) {
+                double acc = 0, acc2 = 0;
+                for (float v : lat) { acc += v; acc2 += (double) v * v; }
+                double mu = acc / lat.size();
+                printf("[debug] step %d eps0=%.4f lat mean=%.4f std=%.4f\n", s,
+                       (double) eps[0], mu, sqrt(std::max(0.0, acc2 / lat.size() - mu * mu)));
+            }
             if (cfg.verbose) { printf("[layerdiff] step %d/%d (t=%d)\r", s + 1, cfg.steps, sch.timesteps[s]); fflush(stdout); }
         }
         if (cfg.verbose) printf("\n");
@@ -310,7 +324,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         std::string p1 = cfg.model_dir + "/layerdiff-vae.gguf";
         std::string p2 = cfg.model_dir + "/trans-vae.gguf";
         if (!pipe_load(cfg, mv, p1) || !pipe_load(cfg, mv, p2)) return false;
-        if (pipe_gpu(cfg)) mv.direct_conv = true;   // decoder-only convs: validated
+        if (pipe_gpu(cfg)) mv.conv_row_chunk = true;   // exact im2col, row-tiled
 
         layers_out.assign(F, Image{});
         for (int f = 0; f < F; f++) {
@@ -334,6 +348,15 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             const size_t P = (size_t) RES * RES;
             for (size_t i = 0; i < P; i++) {
                 for (int c = 0; c < 4; c++) im.data[i * 4 + c] = outs[0][(size_t) c * P + i];
+            }
+            if (!cfg.debug_dir.empty()) {
+                double amax = 0, rmax = 0;
+                for (size_t i = 0; i < P; i++) {
+                    rmax = std::max(rmax, (double) im.data[i * 4]);
+                    amax = std::max(amax, (double) im.data[i * 4 + 3]);
+                }
+                printf("[debug] frame %d decoded rgb_max=%.4f alpha_max=%.4f\n", f, rmax, amax);
+                save_image(cfg.debug_dir + "/frame_" + std::to_string(f) + ".png", im);
             }
             if (cfg.verbose) { printf("[layerdiff] decode %d/%d\r", f + 1, F); fflush(stdout); }
         }
@@ -488,7 +511,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         Model mv;
         std::string p = cfg.model_dir + "/marigold-vae.gguf";
         if (!pipe_load(cfg, mv, p)) return false;
-        if (pipe_gpu(cfg)) mv.direct_conv = true;   // decode stage only
+        if (pipe_gpu(cfg)) mv.conv_row_chunk = true;   // decode stage only
         depths_out.assign(F, Image{});
         for (int f = 0; f < F; f++) {
             std::vector<float> z(DZ);

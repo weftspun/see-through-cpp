@@ -29,7 +29,12 @@ struct Model {
                                  // always stay batched)
     bool  direct_conv = false;   // ggml_conv_2d_direct instead of im2col
                                  // (huge peak-VRAM win; WRONG for the VAE
-                                 // encoder stride-2/pad-0 downsample path)
+                                 // encoder stride-2/pad-0 downsample path
+                                 // and silently zero on Vulkan at very
+                                 // large spatial sizes)
+    bool  conv_row_chunk = false; // tile stride-1 k3 convs over output rows
+                                  // so im2col transients stay small (exact
+                                  // numerics; decode-stage low-VRAM path)
 
     Model() = default;
     Model(const Model &) = delete;
