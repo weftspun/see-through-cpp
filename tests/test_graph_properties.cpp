@@ -22,14 +22,17 @@ static void prop(const char * name, Fn fn) {
     if (!rc::check(name, fn)) failures++;
 }
 
-// synthetic weight registry: tensors live in a dedicated ctx per case
+// synthetic weight registry: tensors are allocated on the ACTIVE backend's
+// buffer type (host-memory weights crash GPU backends)
 struct Fixture {
     Model m;
     ggml_context * ctx_w = nullptr;
     std::mt19937 rng { 1234 };
+    std::vector<std::pair<ggml_tensor *, std::vector<float>>> pending;
+    bool committed = false;
 
     Fixture() {
-        ggml_init_params ip = { 256u * 1024 * 1024, nullptr, false };
+        ggml_init_params ip = { 16u * 1024 * 1024, nullptr, /*no_alloc*/ true };
         ctx_w = ggml_init(ip);
         m.ctx_w.push_back(ctx_w);
     }
@@ -37,10 +40,25 @@ struct Fixture {
         std::vector<int64_t> d(ne);
         ggml_tensor * t = ggml_new_tensor(ctx_w, GGML_TYPE_F32, (int) d.size(), d.data());
         std::normal_distribution<float> n(0.0f, 0.5f);
-        float * p = (float *) t->data;
-        for (int64_t i = 0; i < ggml_nelements(t); i++) p[i] = n(rng);
+        std::vector<float> vals(ggml_nelements(t));
+        for (float & x : vals) x = n(rng);
+        pending.emplace_back(t, std::move(vals));
         m.weights[name] = t;
         return t;
+    }
+    void commit() {
+        if (committed) return;
+        ggml_backend_t probe = st_backend_init();
+        ggml_backend_buffer_t buf =
+            ggml_backend_alloc_ctx_tensors_from_buft(ctx_w,
+                ggml_backend_get_default_buffer_type(probe));
+        m.bufs.push_back(buf);
+        for (auto & pv : pending) {
+            ggml_backend_tensor_set(pv.first, pv.second.data(), 0, pv.second.size() * 4);
+        }
+        pending.clear();
+        ggml_backend_free(probe);
+        committed = true;
     }
     std::vector<float> randvec(size_t n) {
         std::normal_distribution<float> d(0.0f, 1.0f);
@@ -51,9 +69,11 @@ struct Fixture {
 };
 
 // run one single-output graph on the selected device
-static std::vector<float> run1(Model & m, size_t max_nodes,
+static std::vector<float> run1(Fixture & fx, size_t max_nodes,
                                const std::function<ggml_tensor *()> & build,
                                const std::function<void()> & set_inputs) {
+    fx.commit();
+    Model & m = fx.m;
     init_graph_ctx(m, max_nodes);
     ggml_tensor * out = build();
     ggml_set_output(out);
@@ -83,7 +103,7 @@ static std::vector<float> conv_variant(Fixture & fx, int W, int H, int C, int OC
     fx.m.direct_conv = direct;
     fx.m.conv_row_chunk = rowchunk;
     ggml_tensor * xt = nullptr;
-    std::vector<float> r = run1(fx.m, 4096,
+    std::vector<float> r = run1(fx, 4096,
         [&]() {
             xt = ggml_new_tensor_4d(fx.m.ctx_g, GGML_TYPE_F32, W, H, C, 1);
             ggml_set_input(xt);
@@ -147,7 +167,7 @@ int main() {
         auto variant = [&](bool flash) {
             fx.m.flash_attn = flash;
             ggml_tensor * qt = nullptr, * kt = nullptr;
-            auto r = run1(fx.m, 4096,
+            auto r = run1(fx, 4096,
                 [&]() {
                     qt = ggml_new_tensor_3d(fx.m.ctx_g, GGML_TYPE_F32, C, Tq, B);
                     kt = ggml_new_tensor_3d(fx.m.ctx_g, GGML_TYPE_F32, C, Tk, B);
@@ -181,7 +201,7 @@ int main() {
         // fresh graphs
         auto fresh = [&](const std::vector<float> & x) {
             ggml_tensor * xt = nullptr;
-            return run1(fx.m, 512,
+            return run1(fx, 512,
                 [&]() {
                     xt = ggml_new_tensor_2d(fx.m.ctx_g, GGML_TYPE_F32, C, T);
                     ggml_set_input(xt);

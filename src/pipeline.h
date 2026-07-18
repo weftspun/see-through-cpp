@@ -13,7 +13,7 @@
 #include <vector>
 
 struct PipelineConfig {
-    std::string model_dir = ".";
+    std::string model_dir = "models";
     int  steps = 30;
     int  res = 1280;
     int  depth_res = 768;

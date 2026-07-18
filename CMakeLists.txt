@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # diffusers UNet state-dict names exceed ggml's default 64-char cap
 add_compile_definitions(GGML_MAX_NAME=128)
 
-add_subdirectory(ggml)
+add_subdirectory(third_party/ggml)
 
 add_library(seethrough STATIC
     src/ops.cpp
