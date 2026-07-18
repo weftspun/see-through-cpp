@@ -59,7 +59,8 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
         ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
     r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
     r = ggml_cont(ctx, ggml_permute(ctx, r, 0, 1, 3, 2));
-    return ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
+    if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
+    return r;
 }
 
 ggml_tensor * group_norm_affine(Model & m, ggml_tensor * x, const std::string & pre) {
