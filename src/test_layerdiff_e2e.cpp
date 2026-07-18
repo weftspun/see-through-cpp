@@ -17,9 +17,10 @@ int main(int argc, char ** argv) {
     }
     setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // records: vae_feed, c_concat, embeds, pooled, init_noise, sde_noise x2, latents
+    // records: vae_feed, c_concat, embeds, pooled, init_noise, sde_noise x2,
+    // latents, eps x2, per-step latents x2
     std::vector<NpyArray> ref;
-    if (!read_ref(argv[3], ref, 8)) { fprintf(stderr, "failed to read %s\n", argv[3]); return 1; }
+    if (!read_ref(argv[3], ref, 12)) { fprintf(stderr, "failed to read %s\n", argv[3]); return 1; }
     const NpyArray & r_feed = ref[0], & r_cc = ref[1], & r_ehs = ref[2], & r_pool = ref[3];
     const int64_t F = r_ehs.shape[0];
     const int64_t RES = r_feed.shape[2], ZR = RES / 8;
@@ -115,6 +116,17 @@ int main(int argc, char ** argv) {
         ggml_backend_tensor_get(out, eps.data(), 0, D * 4);
         sch.step(lat, eps, ref[5 + s].data);
         printf("step %d (t=%d) done\n", s, sch.timesteps[s]);
+        auto stage = [&](const char * what, const std::vector<float> & mine, const NpyArray & r) {
+            double mx = 0, sm = 0;
+            for (size_t i = 0; i < D; i++) {
+                double d = fabs((double) mine[i] - (double) r.data[i]);
+                if (d > mx) mx = d;
+                sm += d;
+            }
+            printf("  %s: max_abs=%.6f mean_abs=%.6f\n", what, mx, sm / D);
+        };
+        stage("eps", eps, ref[8 + s]);
+        stage("lat", lat, ref[10 + s]);
     }
 
     NpyArray out_arr;

@@ -47,6 +47,18 @@ def main():
     dpm_mod.randn_tensor = rec_randn
     sdxl_mod.randn_tensor = rec_randn
 
+    # record every scheduler step's eps input and latents output for bisection
+    step_eps, step_lat = [], []
+    orig_step = dpm_mod.DPMSolverMultistepScheduler.step
+
+    def rec_step(self, model_output, *a, **k):
+        step_eps.append(model_output.detach().clone())
+        r = orig_step(self, model_output, *a, **k)
+        step_lat.append((r[0] if isinstance(r, tuple) else r.prev_sample).detach().clone())
+        return r
+
+    dpm_mod.DPMSolverMultistepScheduler.step = rec_step
+
     unet = UNetFrameConditionModel.from_pretrained(REPO, subfolder="unet",
                                                    torch_dtype=torch.float32)
     pipe = sdxl_mod.KDiffusionStableDiffusionXLPipeline.from_pretrained(
@@ -78,7 +90,8 @@ def main():
     print("noise draws:", [tuple(t.shape) for t in recorded])
 
     vae_feed = rgb01_pre * 2 - 1
-    arrays = [vae_feed, c_concat_in, embeds, pooled] + recorded + [latents.squeeze(0)]
+    arrays = [vae_feed, c_concat_in, embeds, pooled] + recorded + [latents.squeeze(0)] \
+        + [t.squeeze(0) for t in step_eps] + [t.squeeze(0) for t in step_lat]
     with open("reference_layerdiff.bin", "wb") as f:
         for arr in arrays:
             a = arr.float().numpy().astype("<f4")
