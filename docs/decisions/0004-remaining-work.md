@@ -21,11 +21,15 @@ Track the close-out as the checklist below; check items off as they land on
 
 ### Validation
 
-- [ ] Real-sample E2E on Vulkan (1280px/30 steps) produces non-empty,
-      visually sensible layers in `assets/sample_out.psd`
+- [x] Real-sample E2E on Vulkan (1280px/30 steps) produces non-empty,
+      visually sensible layers (composite matches upstream reference;
+      2026-07-18, 29 layers)
+- [ ] Layer-quality polish: thin border slivers from L/R splits at the pad
+      boundary (e.g. ears-r 5px wide at x=1275), faint head-pass alphas —
+      tune alpha floor / border cleanup against reference_output.psd in `assets/sample_out.psd`
       (open in psd-tools + Krita)
-- [ ] If layers are empty again: add a `--debug-dir` flag dumping per-frame
-      decoded RGBA + page alpha + latent stats, bisect at 512px on GPU
+- [x] --debug-dir stage stats added; bisection found the decode zeros
+      (Vulkan direct conv at large sizes) -> row-chunked im2col fix
 - [ ] Upstream parity: run `inference_psd.py --save_to_psd` (same seed/input)
       and compare per-layer alpha-mask IoU (>0.98 where tags match) and depth
       ordering
@@ -66,6 +70,11 @@ Track the close-out as the checklist below; check items off as they land on
 - [ ] Minimal repro + issue text for the ggml gallocr surprise: input-tensor
       buffers are recycled after their last in-graph read, so all inputs
       must be re-set before every compute of a reused allocated graph
+- [ ] Upstream triage: ggml findings from the graph property tests —
+      (a) CPU flash_attn_ext diverges ~0.3 from naive attention for
+      n_head >= 2 (single-head agrees to f16 precision; Vulkan agrees);
+      (b) Vulkan ggml_conv_2d_direct silently returns zeros at very large
+      spatial sizes (>= ~1280^2; correct at <= 512^2)
 - [ ] Post-MVP (original plan): C ABI + server, trellis2cpp-style
 
 ## Consequences

@@ -32,6 +32,8 @@ if (SEETHROUGH_TESTS)
     add_subdirectory(third_party/rapidcheck)
     add_executable(test_properties tests/test_properties.cpp)
     target_link_libraries(test_properties PRIVATE seethrough rapidcheck)
+    add_executable(test_graph_properties tests/test_graph_properties.cpp)
+    target_link_libraries(test_graph_properties PRIVATE seethrough rapidcheck)
 endif()
 
 foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_unet_blocks test_unet_forward test_scheduler test_layerdiff_e2e test_ddim test_marigold_e2e test_lama test_psd graph_mem)
