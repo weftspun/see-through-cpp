@@ -128,7 +128,8 @@ int main() {
     // so this property runs on GPU only; the CPU divergence is tracked in
     // docs/decisions/0004 for upstream triage.
     const char * dev = getenv("SEETHROUGH_DEVICE");
-    const bool gpu = dev && strcmp(dev, "vulkan") == 0;
+    const bool gpu = !(dev && strcmp(dev, "cpu") == 0) &&
+                     ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) != nullptr;
     if (gpu)
     prop("attn_tokens: flash == naive", []() {
         Fixture fx;

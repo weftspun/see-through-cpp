@@ -21,7 +21,7 @@ struct PipelineConfig {
     uint64_t seed = 42;
     int  threads = 8;
     bool verbose = true;
-    std::string device = "cpu";   // "cpu" | "vulkan" (first GPU in the registry)
+    std::string device = "auto";  // "auto"/"vulkan" = first GPU, "cpu" = fallback
     std::string debug_dir;        // when set: dump per-stage stats + frames
 };
 

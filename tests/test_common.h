@@ -19,14 +19,14 @@
 // SEETHROUGH_DEVICE=vulkan selects the first GPU backend from the registry
 // (falls back to CPU when the build has none)
 static ggml_backend_t st_backend_init() {
+    // GPU is the primary target; CPU only when forced or unavailable
     const char * dev = getenv("SEETHROUGH_DEVICE");
-    if (dev && strcmp(dev, "vulkan") == 0) {
+    if (!(dev && strcmp(dev, "cpu") == 0)) {
         ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
         if (d) {
             fprintf(stderr, "device: %s\n", ggml_backend_dev_name(d));
             return ggml_backend_dev_init(d, nullptr);
         }
-        fprintf(stderr, "no GPU backend in this build, using CPU\n");
     }
     return ggml_backend_cpu_init();
 }
@@ -41,7 +41,7 @@ static bool st_load(Model & m, const char * path) {
     const char * rw = getenv("SEETHROUGH_ROWCHUNK");
     if (rw && rw[0] == '1') m.conv_row_chunk = true;
     const char * dev = getenv("SEETHROUGH_DEVICE");
-    if (dev && strcmp(dev, "vulkan") == 0) {
+    if (!(dev && strcmp(dev, "cpu") == 0)) {
         ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
         if (d) return m.load_backend(path, ggml_backend_dev_buffer_type(d));
     }
