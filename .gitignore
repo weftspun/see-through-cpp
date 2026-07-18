@@ -3,3 +3,6 @@
 models/
 ggufs/
 __pycache__/
+build/
+reference_*.bin
+reference_*.npz
