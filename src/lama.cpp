@@ -11,6 +11,8 @@
 
 using cd = std::complex<double>;
 
+static const double PI = 3.14159265358979323846;
+
 static int smallest_factor(int n) {
     for (int p = 2; p * p <= n; p++) {
         if (n % p == 0) return p;
@@ -25,7 +27,7 @@ static void fft1d(int n, const cd * in, int is, cd * out, bool inv) {
     for (int r = 0; r < p; r++) {
         fft1d(m, in + (size_t) r * is, is * p, out + (size_t) r * m, inv);
     }
-    const double sign = inv ? 2.0 * M_PI / n : -2.0 * M_PI / n;
+    const double sign = inv ? 2.0 * PI / n : -2.0 * PI / n;
     std::vector<cd> t(p);
     for (int k1 = 0; k1 < m; k1++) {
         for (int r = 0; r < p; r++) t[r] = out[(size_t) r * m + k1];
