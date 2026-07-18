@@ -6,6 +6,8 @@
 #include "test_common.h"
 #include "unet_frame.h"
 
+#include <string>
+
 int main(int argc, char ** argv) {
     if (argc < 3) { fprintf(stderr, "usage: %s layerdiff-unet.gguf reference.bin\n", argv[0]); return 1; }
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -35,8 +37,9 @@ int main(int argc, char ** argv) {
     ggml_tensor * aug_text = ggml_add(ctx, text, group_embedding(m, text, "group_embeds.0"));
     emb = ggml_add(ctx, emb, sdxl_add_embed(m, aug_text, tids));
 
+    const bool no_taps = argc > 3 && std::string(argv[3]) == "--no-taps";
     std::vector<ggml_tensor *> taps;
-    ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs2, &taps);
+    ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs2, no_taps ? nullptr : &taps);
     ggml_set_output(out);
     for (ggml_tensor * t : taps) ggml_set_output(t);
 
