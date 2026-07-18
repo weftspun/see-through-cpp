@@ -24,7 +24,11 @@ struct Model {
     float gn_eps    = 1e-6f;
     int   head_dim  = 0;      // spatial attn: 0 = one head of dim C
 
-    bool load(const char * path);        // merge tensors from a gguf
+    bool load(const char * path);        // merge tensors from a gguf (host RAM)
+    // load into a backend buffer (e.g. Vulkan VRAM); pass the buffer type
+    // from ggml_backend_get_default_buffer_type(backend)
+    bool load_backend(const char * path, struct ggml_backend_buffer_type * buft);
+    std::vector<struct ggml_backend_buffer *> bufs;   // owned backend buffers
     ggml_tensor * get(const std::string & name) const;   // exits on miss
     bool has(const std::string & name) const;
 };

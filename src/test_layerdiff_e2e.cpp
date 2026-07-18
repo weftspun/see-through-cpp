@@ -1,6 +1,6 @@
-// M7 of see-through.cpp: the apply_layerdiff denoising loop end-to-end at
-// 512px / 2 steps / group 0 — page VAE encode -> c_concat, injected init +
-// SDE noise, DPM++ 2M SDE loop over the full UNet — final latents vs the
+﻿// M7 of see-through.cpp: the apply_layerdiff denoising loop end-to-end at
+// 512px / 2 steps / group 0 â€” page VAE encode -> c_concat, injected init +
+// SDE noise, DPM++ 2M SDE loop over the full UNet â€” final latents vs the
 // upstream pipeline (gen_reference_layerdiff.py).
 //
 //   test_layerdiff_e2e <layerdiff-unet.gguf> <layerdiff-vae.gguf> <reference_layerdiff.bin>
@@ -31,7 +31,7 @@ int main(int argc, char ** argv) {
     std::vector<float> c_concat;
     {
         Model mv;
-        if (!mv.load(argv[2])) { fprintf(stderr, "failed to load %s\n", argv[2]); return 1; }
+        if (!st_load(mv, argv[2])) { fprintf(stderr, "failed to load %s\n", argv[2]); return 1; }
         init_graph_ctx(mv, 4096);
         ggml_tensor * x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
         ggml_set_input(x);
@@ -49,7 +49,7 @@ int main(int argc, char ** argv) {
 
     // ---- stage 2: denoising loop ----
     Model m;
-    if (!m.load(argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
+    if (!st_load(m, argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
     printf("weights: %zu tensors\n", m.weights.size());
 
     init_graph_ctx(m, 16384);
@@ -71,8 +71,8 @@ int main(int argc, char ** argv) {
     ggml_set_output(out);
 
     // static graph reused every step: allocate once, swap inputs
-    ggml_backend_t backend = ggml_backend_cpu_init();
-    ggml_backend_cpu_set_n_threads(backend, 8);
+    ggml_backend_t backend = st_backend_init();
+    if (ggml_backend_is_cpu(backend)) ggml_backend_cpu_set_n_threads(backend, 8);
     ggml_cgraph * gf = ggml_new_graph_custom(ctx, 16384, false);
     ggml_build_forward_expand(gf, out);
     printf("graph: %d nodes\n", ggml_graph_n_nodes(gf));
@@ -104,7 +104,7 @@ int main(int argc, char ** argv) {
             std::copy(c_concat.begin(), c_concat.end(), input.begin() + f * 2 * DZ + DZ);
         }
         // gallocr recycles input buffers after their last read within one
-        // compute — EVERY input must be re-set before EVERY compute
+        // compute â€” EVERY input must be re-set before EVERY compute
         ggml_backend_tensor_set(ehs, r_ehs.data.data(), 0, r_ehs.data.size() * 4);
         ggml_backend_tensor_set(text, r_pool.data.data(), 0, r_pool.data.size() * 4);
         ggml_backend_tensor_set(tids, v.data(), 0, v.size() * 4);

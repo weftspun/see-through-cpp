@@ -1,4 +1,4 @@
-// M4 of see-through.cpp: UNetFrameCondition building blocks vs upstream —
+﻿// M4 of see-through.cpp: UNetFrameCondition building blocks vs upstream â€”
 // resnet+temb, a full 2-layer Transformer3D (stock + cross-frame temporal
 // blocks), and the conditioning path (time/add/group embeddings, group 0).
 //
@@ -12,7 +12,7 @@ int main(int argc, char ** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     Model m;
-    if (!m.load(argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
+    if (!st_load(m, argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
     printf("weights: %zu tensors\n", m.weights.size());
 
     // records: rx, rtemb, ry | tx, ehs, ty | text_embeds, emb, ehs2

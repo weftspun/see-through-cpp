@@ -12,7 +12,34 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
+
+// SEETHROUGH_DEVICE=vulkan selects the first GPU backend from the registry
+// (falls back to CPU when the build has none)
+static ggml_backend_t st_backend_init() {
+    const char * dev = getenv("SEETHROUGH_DEVICE");
+    if (dev && strcmp(dev, "vulkan") == 0) {
+        ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+        if (d) {
+            fprintf(stderr, "device: %s\n", ggml_backend_dev_name(d));
+            return ggml_backend_dev_init(d, nullptr);
+        }
+        fprintf(stderr, "no GPU backend in this build, using CPU\n");
+    }
+    return ggml_backend_cpu_init();
+}
+
+// load weights to the right place for the selected device
+static bool st_load(Model & m, const char * path) {
+    const char * dev = getenv("SEETHROUGH_DEVICE");
+    if (dev && strcmp(dev, "vulkan") == 0) {
+        ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+        if (d) return m.load_backend(path, ggml_backend_dev_buffer_type(d));
+    }
+    return m.load(path);
+}
 
 struct NpyArray {
     std::vector<int64_t> shape;   // numpy order (outermost first)
@@ -51,8 +78,8 @@ static void init_graph_ctx(Model & m, size_t max_nodes) {
 template <typename SetInputs>
 static bool compute_cpu_multi(Model & m, const std::vector<ggml_tensor *> & outs,
                               size_t max_nodes, SetInputs set_inputs, int n_threads = 8) {
-    ggml_backend_t backend = ggml_backend_cpu_init();
-    ggml_backend_cpu_set_n_threads(backend, n_threads);
+    ggml_backend_t backend = st_backend_init();
+    if (ggml_backend_is_cpu(backend)) ggml_backend_cpu_set_n_threads(backend, n_threads);
     ggml_cgraph * gf = ggml_new_graph_custom(m.ctx_g, max_nodes, false);
     for (ggml_tensor * out : outs) ggml_build_forward_expand(gf, out);
     printf("graph: %d nodes\n", ggml_graph_n_nodes(gf));

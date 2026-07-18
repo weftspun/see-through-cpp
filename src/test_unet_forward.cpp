@@ -1,4 +1,4 @@
-// M5 of see-through.cpp: full LayerDiff UNetFrameConditionModel forward
+﻿// M5 of see-through.cpp: full LayerDiff UNetFrameConditionModel forward
 // (13 frames, group 0, t=999) at 512px latent vs upstream.
 //
 //   test_unet_forward <layerdiff-unet.gguf> <reference_unet_forward.bin>
@@ -13,7 +13,7 @@ int main(int argc, char ** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     Model m;
-    if (!m.load(argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
+    if (!st_load(m, argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
     printf("weights: %zu tensors\n", m.weights.size());
 
     // sample, ehs, text_embeds, out, then taps: conv_in, down x3, mid
@@ -46,7 +46,7 @@ int main(int argc, char ** argv) {
     std::vector<ggml_tensor *> outs = { out };
     outs.insert(outs.end(), taps.begin(), taps.end());
     if (!compute_cpu_multi(m, outs, 16384, [&] {
-            // reference sample is (1, F, 8, 64, 64) — same memory order as
+            // reference sample is (1, F, 8, 64, 64) â€” same memory order as
             // our (64, 64, 8, F)
             ggml_backend_tensor_set(sample, ref[0].data.data(), 0, ref[0].data.size() * 4);
             ggml_backend_tensor_set(ehs,  ref[1].data.data(), 0, ref[1].data.size() * 4);

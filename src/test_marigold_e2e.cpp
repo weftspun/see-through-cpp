@@ -1,6 +1,6 @@
-// M8 of see-through.cpp: the Marigold depth stage end-to-end — injected cond
+﻿// M8 of see-through.cpp: the Marigold depth stage end-to-end â€” injected cond
 // latents (page+layer), 4 trailing DDIM steps over the frame-condition UNet,
-// VAE decode -> RGB mean -> clip -> [0,1] — vs the upstream pipeline.
+// VAE decode -> RGB mean -> clip -> [0,1] â€” vs the upstream pipeline.
 //
 //   test_marigold_e2e <marigold-unet.gguf> <marigold-vae.gguf> <reference_marigold.bin>
 
@@ -26,7 +26,7 @@ int main(int argc, char ** argv) {
 
     // ---- denoising loop ----
     Model m;
-    if (!m.load(argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
+    if (!st_load(m, argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
     printf("unet weights: %zu tensors\n", m.weights.size());
 
     init_graph_ctx(m, 16384);
@@ -40,8 +40,8 @@ int main(int argc, char ** argv) {
     ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs);
     ggml_set_output(out);
 
-    ggml_backend_t backend = ggml_backend_cpu_init();
-    ggml_backend_cpu_set_n_threads(backend, 8);
+    ggml_backend_t backend = st_backend_init();
+    if (ggml_backend_is_cpu(backend)) ggml_backend_cpu_set_n_threads(backend, 8);
     ggml_cgraph * gf = ggml_new_graph_custom(ctx, 16384, false);
     ggml_build_forward_expand(gf, out);
     printf("graph: %d nodes\n", ggml_graph_n_nodes(gf));
@@ -78,7 +78,7 @@ int main(int argc, char ** argv) {
             printf("  step-0 unet input vs upstream: max_abs=%.6f\n", mx);
         }
         // gallocr recycles input buffers after their last read within one
-        // compute — EVERY input must be re-set before EVERY compute
+        // compute â€” EVERY input must be re-set before EVERY compute
         ggml_backend_tensor_set(ehs, ehs_f.data(), 0, ehs_f.size() * 4);
         ggml_backend_tensor_set(sample, input.data(), 0, input.size() * 4);
         std::vector<float> tstep(F, (float) sch.timesteps[s]);
@@ -115,7 +115,7 @@ int main(int argc, char ** argv) {
 
     // ---- decode -> RGB mean -> clip -> [0,1] ----
     Model mv;
-    if (!mv.load(argv[2])) { fprintf(stderr, "failed to load %s\n", argv[2]); return 1; }
+    if (!st_load(mv, argv[2])) { fprintf(stderr, "failed to load %s\n", argv[2]); return 1; }
     init_graph_ctx(mv, 8192);
     ggml_tensor * z = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, F);
     ggml_set_input(z);

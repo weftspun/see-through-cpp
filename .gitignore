@@ -6,3 +6,8 @@ __pycache__/
 build/
 reference_*.bin
 reference_*.npz
+
+build*/
+*.psd
+*.psd.json
+assets_sample_synth.png

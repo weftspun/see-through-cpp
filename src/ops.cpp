@@ -1,5 +1,7 @@
 #include "ops.h"
 
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
 #include "gguf.h"
 
 #include <cmath>
@@ -27,6 +29,53 @@ bool Model::load(const char * path) {
     for (ggml_tensor * t = ggml_get_first_tensor(c); t; t = ggml_get_next_tensor(c, t)) {
         weights[ggml_get_name(t)] = t;
     }
+    ctx_w.push_back(c);
+    gguf_free(g);
+    return true;
+}
+
+bool Model::load_backend(const char * path, ggml_backend_buffer_type * buft) {
+    ggml_context * c = nullptr;
+    gguf_init_params gp = { /*no_alloc*/ true, /*ctx*/ &c };
+    gguf_context * g = gguf_init_from_file(path, gp);
+    if (!g) return false;
+    for (int64_t i = 0; i < gguf_get_n_kv(g); i++) {
+        const char * key = gguf_get_key(g, i);
+        if (gguf_get_kv_type(g, i) == GGUF_TYPE_STRING) {
+            std::string k = key;
+            for (const char * suf : { ".config_json", ".vocab_json", ".merges_txt" }) {
+                size_t n = strlen(suf);
+                if (k.size() > n && k.compare(k.size() - n, n, suf) == 0) {
+                    config_json[k] = gguf_get_val_str(g, i);
+                }
+            }
+        }
+    }
+    ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(c, buft);
+    if (!buf) { gguf_free(g); return false; }
+    bufs.push_back(buf);
+
+    FILE * f = fopen(path, "rb");
+    if (!f) { gguf_free(g); return false; }
+    const size_t data_off = gguf_get_data_offset(g);
+    std::vector<uint8_t> staging;
+    for (ggml_tensor * t = ggml_get_first_tensor(c); t; t = ggml_get_next_tensor(c, t)) {
+        int64_t idx = gguf_find_tensor(g, ggml_get_name(t));
+        if (idx < 0) { fclose(f); gguf_free(g); return false; }
+        size_t nbytes = ggml_nbytes(t);
+        staging.resize(nbytes);
+#ifdef _WIN32
+        int seek_rc = _fseeki64(f, (long long) (data_off + gguf_get_tensor_offset(g, idx)), SEEK_SET);
+#else
+        int seek_rc = fseeko(f, (off_t) (data_off + gguf_get_tensor_offset(g, idx)), SEEK_SET);
+#endif
+        if (seek_rc != 0 || fread(staging.data(), 1, nbytes, f) != nbytes) {
+            fclose(f); gguf_free(g); return false;
+        }
+        ggml_backend_tensor_set(t, staging.data(), 0, nbytes);
+        weights[ggml_get_name(t)] = t;
+    }
+    fclose(f);
     ctx_w.push_back(c);
     gguf_free(g);
     return true;

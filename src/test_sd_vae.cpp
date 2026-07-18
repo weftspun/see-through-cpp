@@ -1,4 +1,4 @@
-// Milestone 2 of see-through.cpp: the stock SD/SDXL VAE decoder (diffusers
+﻿// Milestone 2 of see-through.cpp: the stock SD/SDXL VAE decoder (diffusers
 // AutoencoderKL) as a ggml graph, validated numerically against a PyTorch
 // reference. Covers both layerdiff-vae (SDXL) and marigold-vae (SD).
 //
@@ -12,7 +12,7 @@ int main(int argc, char ** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     Model m;
-    if (!m.load(argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
+    if (!st_load(m, argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
     printf("weights: %zu tensors\n", m.weights.size());
 
     std::vector<NpyArray> ref;   // z, y
