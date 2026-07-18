@@ -25,4 +25,16 @@ struct DpmSolverSDE {
     std::vector<float> prev_x0;      // model_outputs[-2]
 };
 
-// DDIM with trailing spacing (Marigold: 4 steps, set in M8)
+// DDIM in the Marigold configuration: scaled_linear betas [0.00085, 0.012],
+// v_prediction, rescale_betas_zero_snr, trailing spacing, set_alpha_to_one
+// false, clip_sample false, eta 0 (deterministic).
+struct DdimTrailing {
+    std::vector<int>    timesteps;    // descending, size n_steps
+    std::vector<double> ac;           // zero-SNR-rescaled alphas_cumprod [1000]
+    double final_alpha_cumprod = 1.0;
+    int    n_steps = 0;
+
+    void set_timesteps(int n_steps);
+    // v = UNet v-prediction at timesteps[step]; updates sample in place
+    void step(std::vector<float> & sample, const std::vector<float> & v, int step);
+};

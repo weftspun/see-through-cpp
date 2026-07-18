@@ -87,3 +87,46 @@ void DpmSolverSDE::step(std::vector<float> & sample, const std::vector<float> & 
     if (lower_order_nums < 2) lower_order_nums++;
     step_index++;
 }
+
+void DdimTrailing::set_timesteps(int n) {
+    const int    N = 1000;
+    const double beta_start = 0.00085, beta_end = 0.012;
+
+    ac.resize(N);
+    double cum = 1.0;
+    for (int i = 0; i < N; i++) {
+        double b = sqrt(beta_start) + (sqrt(beta_end) - sqrt(beta_start)) * i / (N - 1);
+        cum *= 1.0 - b * b;
+        ac[i] = cum;
+    }
+    // rescale_betas_zero_snr: shift/scale sqrt(ac) so the terminal SNR is zero
+    const double s0 = sqrt(ac[0]), sT = sqrt(ac[N - 1]);
+    for (int i = 0; i < N; i++) {
+        double s = (sqrt(ac[i]) - sT) * s0 / (s0 - sT);
+        ac[i] = s * s;
+    }
+    final_alpha_cumprod = ac[0];                 // set_alpha_to_one = false
+
+    n_steps = n;
+    timesteps.resize(n);
+    const double ratio = (double) N / n;         // trailing
+    for (int k = 0; k < n; k++) {
+        timesteps[k] = (int) llround(N - k * ratio) - 1;
+    }
+}
+
+void DdimTrailing::step(std::vector<float> & sample, const std::vector<float> & v, int step) {
+    const int t = timesteps[step];
+    const int prev_t = t - 1000 / n_steps;
+    const double a_t = ac[t];
+    const double a_prev = prev_t >= 0 ? ac[prev_t] : final_alpha_cumprod;
+    const double sq_at = sqrt(a_t), sq_bt = sqrt(1.0 - a_t);
+    const double sq_ap = sqrt(a_prev), sq_bp = sqrt(1.0 - a_prev);
+
+    for (size_t i = 0; i < sample.size(); i++) {
+        // v_prediction: x0 = sqrt(a)*x - sqrt(1-a)*v; eps = sqrt(a)*v + sqrt(1-a)*x
+        double x0  = sq_at * sample[i] - sq_bt * v[i];
+        double eps = sq_at * v[i] + sq_bt * sample[i];
+        sample[i] = (float) (sq_ap * x0 + sq_bp * eps);
+    }
+}
