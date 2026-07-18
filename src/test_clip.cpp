@@ -15,7 +15,7 @@ int main(int argc, char ** argv) {
     const std::string variant = argv[3];
 
     Model m;
-    if (!m.load(argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
+    if (!st_load(m, argv[1])) { fprintf(stderr, "failed to load %s\n", argv[1]); return 1; }
     printf("weights: %zu tensors\n", m.weights.size());
 
     // pull config/vocab/merges KVs by suffix (keys are seethrough.<comp>.*)

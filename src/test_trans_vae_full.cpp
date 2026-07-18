@@ -1,6 +1,6 @@
 // Milestone 3 of see-through.cpp: the full TransparentVAE decode chain as one
-// ggml graph — SDXL VAE decode -> pixel*0.5+0.5 -> UNet1024 alpha head ->
-// clip(0,1) — validated against upstream TransparentVAEDecoder.forward.
+// ggml graph Ã¢â‚¬â€ SDXL VAE decode -> pixel*0.5+0.5 -> UNet1024 alpha head ->
+// clip(0,1) Ã¢â‚¬â€ validated against upstream TransparentVAEDecoder.forward.
 //
 //   test_trans_vae_full <layerdiff-vae.gguf> <trans-vae.gguf> <reference_trans_vae_full.bin>
 
@@ -15,7 +15,7 @@ int main(int argc, char ** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     Model m;
-    if (!m.load(argv[1]) || !m.load(argv[2])) { fprintf(stderr, "failed to load weights\n"); return 1; }
+    if (!st_load(m, argv[1]) || !st_load(m, argv[2])) { fprintf(stderr, "failed to load weights\n"); return 1; }
     printf("weights: %zu tensors (both ggufs)\n", m.weights.size());
 
     std::vector<NpyArray> ref;   // z, y

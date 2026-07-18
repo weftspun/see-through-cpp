@@ -1,4 +1,4 @@
-﻿// M5 of see-through.cpp: full LayerDiff UNetFrameConditionModel forward
+// M5 of see-through.cpp: full LayerDiff UNetFrameConditionModel forward
 // (13 frames, group 0, t=999) at 512px latent vs upstream.
 //
 //   test_unet_forward <layerdiff-unet.gguf> <reference_unet_forward.bin>
@@ -21,7 +21,7 @@ int main(int argc, char ** argv) {
     if (!read_ref(argv[2], ref, 9)) { fprintf(stderr, "failed to read %s\n", argv[2]); return 1; }
     const int64_t F = ref[0].shape[1], ZRES = ref[0].shape[4];
 
-    init_graph_ctx(m, 16384);
+    init_graph_ctx(m, 98304);
     ggml_context * ctx = m.ctx_g;
 
     ggml_tensor * sample = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, ZRES, ZRES, 8, F);
@@ -45,7 +45,7 @@ int main(int argc, char ** argv) {
 
     std::vector<ggml_tensor *> outs = { out };
     outs.insert(outs.end(), taps.begin(), taps.end());
-    if (!compute_cpu_multi(m, outs, 16384, [&] {
+    if (!compute_cpu_multi(m, outs, 98304, [&] {
             // reference sample is (1, F, 8, 64, 64) â€” same memory order as
             // our (64, 64, 8, F)
             ggml_backend_tensor_set(sample, ref[0].data.data(), 0, ref[0].data.size() * 4);

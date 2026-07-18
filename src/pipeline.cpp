@@ -53,11 +53,15 @@ static ggml_backend_t pipe_backend(const PipelineConfig & cfg) {
     return b;
 }
 
-static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string & path) {
+static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string & path,
+                      bool unet = false) {
     ggml_backend_dev_t d = pipe_gpu(cfg);
     if (d) {
-        m.flash_attn = true;   // naive 80x80 spatial attention needs ~21GB at 1280px
-        m.spatial_chunk = true; // per-frame spatial transformers cap peak VRAM
+        if (unet) {
+            m.flash_attn = true;    // naive 80x80 spatial attention is ~21GB at 1280px
+            m.spatial_chunk = true; // direct conv + per-frame transformers cap peak
+        }                           // VRAM; NOT for VAEs: ggml_conv_2d_direct is
+                                    // wrong for the encoder s2/p0 downsample path
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
     }
     return m.load(path.c_str());
@@ -236,7 +240,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
     {
         Model m;
         std::string p = cfg.model_dir + "/layerdiff-unet.gguf";
-        if (!pipe_load(cfg, m, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
+        if (!pipe_load(cfg, m, p, true)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
 
         size_t max_nodes = 98304;
         size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
@@ -428,7 +432,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
     {
         Model m;
         std::string p = cfg.model_dir + "/marigold-unet.gguf";
-        if (!pipe_load(cfg, m, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
+        if (!pipe_load(cfg, m, p, true)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
         size_t max_nodes = 98304;
         size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
         ggml_init_params ip = { meta, nullptr, true };
@@ -523,7 +527,7 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg) {
     int threads = cfg.threads;
     return [model, path, threads](const Image & rgb, const std::vector<uint8_t> & mask) -> Image {
         if (model->weights.empty() && !model->load(path.c_str())) {
-            fprintf(stderr, "failed to load %s Ã¢â‚¬â€ skipping inpaint\n", path.c_str());
+            fprintf(stderr, "failed to load %s ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â skipping inpaint\n", path.c_str());
             return rgb;
         }
         // upstream inpaint_preprocess: resize <=1024 stride 64, square pad
