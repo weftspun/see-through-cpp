@@ -9,6 +9,8 @@ mirroring how See-Through calls each encoder:
 Records: ids (as f32), penultimate/final [n,d], (te2: pooled [1280])."""
 import sys
 
+import os
+os.makedirs('gen_reference', exist_ok=True)
 import numpy as np
 import torch
 from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
@@ -47,7 +49,7 @@ def main():
     for a in arrays:
         print("shape", tuple(a.shape), "mean", float(a.float().mean()))
 
-    out_path = f"reference_{comp}.bin"
+    out_path = f"gen_reference/reference_{comp}.bin"
     with open(out_path, "wb") as f:
         for arr in arrays:
             a = arr.numpy().astype("<f4")

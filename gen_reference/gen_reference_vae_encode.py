@@ -4,6 +4,8 @@ latent_dist.mean (deterministic; the port never uses .sample()). Covers both
 layerdiff-vae (SDXL) and marigold-vae (SD)."""
 import sys
 
+import os
+os.makedirs('gen_reference', exist_ok=True)
 import numpy as np
 import torch
 from diffusers import AutoencoderKL
@@ -26,7 +28,7 @@ def main():
         z = vae.encode(x).latent_dist.mean
     print("latent:", tuple(z.shape), "mean", float(z.mean()), "std", float(z.std()))
 
-    out = f"reference_vae_encode_{comp}.bin"
+    out = f"gen_reference/reference_vae_encode_{comp}.bin"
     with open(out, "wb") as f:
         for arr in (x, z):
             a = arr.numpy().astype("<f4")

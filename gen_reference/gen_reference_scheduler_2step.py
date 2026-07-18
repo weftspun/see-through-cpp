@@ -3,6 +3,8 @@
 (eps = 0.1*x + e for a fixed seeded direction e) and per-step injected noise,
 using the exact See-Through scheduler construction (juggernautXL base config +
 sde-dpmsolver++ + final_sigmas_type zero)."""
+import os
+os.makedirs('gen_reference', exist_ok=True)
 import numpy as np
 import torch
 from diffusers import DPMSolverMultistepScheduler
@@ -37,7 +39,7 @@ def main():
     traj = torch.cat(traj)                      # (STEPS, D)
     print("final mean", float(x.mean()), "std", float(x.std()))
 
-    with open("reference_scheduler.bin", "wb") as f:
+    with open("gen_reference/reference_scheduler.bin", "wb") as f:
         for arr in (init, e, noises, traj):
             a = arr.numpy().astype("<f4")
             f.write(np.int32(a.ndim).tobytes())

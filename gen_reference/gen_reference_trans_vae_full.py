@@ -6,6 +6,8 @@ reference_trans_vae_full.bin. Run with the see-through repo on sys.path."""
 import os
 import sys
 
+import os
+os.makedirs('gen_reference', exist_ok=True)
 import numpy as np
 import torch
 
@@ -40,7 +42,7 @@ def main():
     print("output:", tuple(y.shape), "mean", float(y.mean()), "std", float(y.std()))
 
     # simple binary: for each of z, y: i32 ndim, i64 dims..., f32 data
-    with open("reference_trans_vae_full.bin", "wb") as f:
+    with open("gen_reference/reference_trans_vae_full.bin", "wb") as f:
         for arr in (z, y):
             a = arr.numpy().astype("<f4")
             f.write(np.int32(a.ndim).tobytes())

@@ -12,6 +12,8 @@ _ROOT = os.environ.get("SEETHROUGH_DIR", r"C:\Users\ernes\Desktop\see-through")
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "common"))
 
+import os
+os.makedirs('gen_reference', exist_ok=True)
 import numpy as np
 import torch
 
@@ -98,7 +100,7 @@ def main():
     ehs = pipe.empty_text_embed                   # (1, 2, 1024)
     arrays = [cond, ehs[0], target_init, depth.float()] + step_eps + step_lat \
         + [unet_inputs[0].squeeze(0)]
-    with open("reference_marigold.bin", "wb") as f:
+    with open("gen_reference/reference_marigold.bin", "wb") as f:
         for arr in arrays:
             a = arr.detach().numpy().astype("<f4")
             f.write(np.int32(a.ndim).tobytes())

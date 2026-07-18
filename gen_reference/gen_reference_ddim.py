@@ -2,6 +2,8 @@
 """M8 scheduler reference: Marigold's DDIM (v_prediction, zero-SNR rescale,
 trailing, 4 steps, eta 0) trajectory with an analytic fake model
 (v = 0.1*x + e)."""
+import os
+os.makedirs('gen_reference', exist_ok=True)
 import numpy as np
 import torch
 from diffusers import DDIMScheduler
@@ -29,7 +31,7 @@ def main():
     traj = torch.cat(traj)
     print("final mean", float(x.mean()), "std", float(x.std()))
 
-    with open("reference_ddim.bin", "wb") as f:
+    with open("gen_reference/reference_ddim.bin", "wb") as f:
         for arr in (init, e, traj):
             a = arr.numpy().astype("<f4")
             f.write(np.int32(a.ndim).tobytes())

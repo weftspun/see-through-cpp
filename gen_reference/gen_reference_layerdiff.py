@@ -16,6 +16,8 @@ _ROOT = os.environ.get("SEETHROUGH_DIR", r"C:\Users\ernes\Desktop\see-through")
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "common"))
 
+import os
+os.makedirs('gen_reference', exist_ok=True)
 import numpy as np
 import torch
 
@@ -92,7 +94,7 @@ def main():
     vae_feed = rgb01_pre * 2 - 1
     arrays = [vae_feed, c_concat_in, embeds, pooled] + recorded + [latents.squeeze(0)] \
         + [t.squeeze(0) for t in step_eps] + [t.squeeze(0) for t in step_lat]
-    with open("reference_layerdiff.bin", "wb") as f:
+    with open("gen_reference/reference_layerdiff.bin", "wb") as f:
         for arr in arrays:
             a = arr.float().numpy().astype("<f4")
             f.write(np.int32(a.ndim).tobytes())
