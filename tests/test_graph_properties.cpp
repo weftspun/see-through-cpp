@@ -221,6 +221,27 @@ int main() {
         RC_ASSERT(max_diff(f2, r2) < 1e-4);
     });
 
+    // fixed production-scale checks at the 1280px UNet's latent sizes (the
+    // reference gates only cover 64x64-latent shapes)
+    {
+        printf("-- production-scale: direct conv at UNet latent sizes --\n");
+        struct Case { int W, H, C, OC, stride; };
+        for (Case cs : { Case{160, 160, 320, 320, 1}, Case{160, 160, 320, 320, 2},
+                         Case{80, 80, 640, 640, 1}, Case{80, 80, 640, 640, 2},
+                         Case{40, 40, 1280, 1280, 1} }) {
+            Fixture fx;
+            fx.weight("w.weight", { 3, 3, cs.C, cs.OC });
+            fx.weight("w.bias", { cs.OC });
+            std::vector<float> x = fx.randvec((size_t) cs.W * cs.H * cs.C);
+            auto ref = conv_variant(fx, cs.W, cs.H, cs.C, cs.OC, cs.stride, 1, x, false, false);
+            auto dir = conv_variant(fx, cs.W, cs.H, cs.C, cs.OC, cs.stride, 1, x, true, false);
+            double d = max_diff(ref, dir);
+            printf("   %dx%dx%d s%d: direct vs im2col %.6f %s\n", cs.W, cs.H, cs.C,
+                   cs.stride, d, d < 5e-2 ? "ok" : "FAIL");
+            if (d >= 5e-2) failures++;
+        }
+    }
+
     // fixed big-size regression: the exact configuration that silently zeroed
     // on Vulkan (direct conv at >= 1280^2)
     {
