@@ -91,19 +91,3 @@ python convert_diffusers_to_gguf.py --component layerdiff-te2    # OpenCLIP-G
 python convert_diffusers_to_gguf.py --component marigold-te      # OpenCLIP-H
 python convert_lama_to_gguf.py                                   # LaMa inpainter
 ```
-
-## Layout
-
-```
-src/ops.*          shared graph vocabulary (conv/norm/linear/resnet/attention)
-src/vae.*          AutoencoderKL encode/decode, UNet1024, TransparentVAE chain
-src/clip.*         CLIP BPE tokenizer + text transformer (3 variants)
-src/unet_frame.*   UNetFrameCondition blocks + full forward (layerdiff & marigold)
-src/scheduler.*    DPM++ 2M SDE + trailing DDIM (pure CPU math)
-src/lama.*         LaMa FFC generator with custom 2-D real-FFT op
-src/image_utils.*  stb I/O, cv2-compatible resizes, pyramid RGB bleed
-src/postproc.*     further_extr heuristics (components, 2-means, L/R splits)
-src/psd_writer.*   minimal 8BPS writer (PackBits, luni names)
-src/pipeline.*     staged orchestration (load/free weights per stage)
-src/see_through.cpp  CLI
-```

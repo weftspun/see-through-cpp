@@ -28,6 +28,7 @@ target_link_libraries(see-through PRIVATE seethrough)
 
 add_library(seethrough_c SHARED src/seethrough_capi.cpp)
 target_link_libraries(seethrough_c PRIVATE seethrough)
+target_compile_definitions(seethrough_c PRIVATE ST_BUILD_DLL)
 
 
 foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_unet_blocks test_unet_forward test_scheduler test_layerdiff_e2e test_ddim test_marigold_e2e test_lama graph_mem)

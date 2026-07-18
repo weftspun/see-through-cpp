@@ -13,6 +13,16 @@
 
 #include <stdint.h>
 
+#if defined(_WIN32)
+#  if defined(ST_BUILD_DLL)
+#    define ST_API __declspec(dllexport)
+#  else
+#    define ST_API __declspec(dllimport)
+#  endif
+#else
+#  define ST_API __attribute__((visibility("default")))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -31,15 +41,15 @@ typedef struct st_case {
 // Executes the candidate (knobs as given) and the reference (knobs off) on
 // the primary device and returns the worst per-element interval violation
 // (tol = atol + rtol_auto * max|ref|, rtol_auto scaled by reduction length).
-double st_witness_check(const st_case * c);
+ST_API double st_witness_check(const st_case * c);
 
 // primary device name ("Vulkan0 (...)" or "CPU"), static storage
-const char * st_device(void);
+ST_API const char * st_device(void);
 
 // Flat-scalar variant for FFI hosts without struct marshalling (Lean 4
 // @[extern]): op 0 = conv2d, 1 = attn; knobs bit0 = direct, bit1 = rowchunk,
 // bit2 = flash. Deterministic in all arguments.
-double st_witness_check_flat(uint32_t op, uint32_t w, uint32_t h, uint32_t c,
+ST_API double st_witness_check_flat(uint32_t op, uint32_t w, uint32_t h, uint32_t c,
                              uint32_t oc, uint32_t stride, uint32_t heads,
                              uint32_t tq, uint32_t tk, uint32_t batch,
                              uint32_t knobs, uint64_t seed);
