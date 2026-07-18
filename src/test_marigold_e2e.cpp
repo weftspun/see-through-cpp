@@ -1,6 +1,6 @@
-﻿// M8 of see-through.cpp: the Marigold depth stage end-to-end â€” injected cond
+﻿// M8 of see-through.cpp: the Marigold depth stage end-to-end - injected cond
 // latents (page+layer), 4 trailing DDIM steps over the frame-condition UNet,
-// VAE decode -> RGB mean -> clip -> [0,1] â€” vs the upstream pipeline.
+// VAE decode -> RGB mean -> clip -> [0,1] - vs the upstream pipeline.
 //
 //   test_marigold_e2e <marigold-unet.gguf> <marigold-vae.gguf> <reference_marigold.bin>
 
@@ -78,7 +78,7 @@ int main(int argc, char ** argv) {
             printf("  step-0 unet input vs upstream: max_abs=%.6f\n", mx);
         }
         // gallocr recycles input buffers after their last read within one
-        // compute â€” EVERY input must be re-set before EVERY compute
+        // compute - EVERY input must be re-set before EVERY compute
         ggml_backend_tensor_set(ehs, ehs_f.data(), 0, ehs_f.size() * 4);
         ggml_backend_tensor_set(sample, input.data(), 0, input.size() * 4);
         std::vector<float> tstep(F, (float) sch.timesteps[s]);

@@ -46,7 +46,7 @@ int main(int argc, char ** argv) {
     std::vector<ggml_tensor *> outs = { out };
     outs.insert(outs.end(), taps.begin(), taps.end());
     if (!compute_cpu_multi(m, outs, 98304, [&] {
-            // reference sample is (1, F, 8, 64, 64) â€” same memory order as
+            // reference sample is (1, F, 8, 64, 64) — same memory order as
             // our (64, 64, 8, F)
             ggml_backend_tensor_set(sample, ref[0].data.data(), 0, ref[0].data.size() * 4);
             ggml_backend_tensor_set(ehs,  ref[1].data.data(), 0, ref[1].data.size() * 4);

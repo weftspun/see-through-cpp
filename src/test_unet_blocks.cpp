@@ -1,4 +1,4 @@
-﻿// M4 of see-through.cpp: UNetFrameCondition building blocks vs upstream â€”
+﻿// M4 of see-through.cpp: UNetFrameCondition building blocks vs upstream -
 // resnet+temb, a full 2-layer Transformer3D (stock + cross-frame temporal
 // blocks), and the conditioning path (time/add/group embeddings, group 0).
 //

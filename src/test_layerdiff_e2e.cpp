@@ -1,6 +1,6 @@
 ﻿// M7 of see-through.cpp: the apply_layerdiff denoising loop end-to-end at
-// 512px / 2 steps / group 0 â€” page VAE encode -> c_concat, injected init +
-// SDE noise, DPM++ 2M SDE loop over the full UNet â€” final latents vs the
+// 512px / 2 steps / group 0 - page VAE encode -> c_concat, injected init +
+// SDE noise, DPM++ 2M SDE loop over the full UNet - final latents vs the
 // upstream pipeline (gen_reference_layerdiff.py).
 //
 //   test_layerdiff_e2e <layerdiff-unet.gguf> <layerdiff-vae.gguf> <reference_layerdiff.bin>
@@ -104,7 +104,7 @@ int main(int argc, char ** argv) {
             std::copy(c_concat.begin(), c_concat.end(), input.begin() + f * 2 * DZ + DZ);
         }
         // gallocr recycles input buffers after their last read within one
-        // compute â€” EVERY input must be re-set before EVERY compute
+        // compute - EVERY input must be re-set before EVERY compute
         ggml_backend_tensor_set(ehs, r_ehs.data.data(), 0, r_ehs.data.size() * 4);
         ggml_backend_tensor_set(text, r_pool.data.data(), 0, r_pool.data.size() * 4);
         ggml_backend_tensor_set(tids, v.data(), 0, v.size() * 4);

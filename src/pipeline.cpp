@@ -527,7 +527,7 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg) {
     int threads = cfg.threads;
     return [model, path, threads](const Image & rgb, const std::vector<uint8_t> & mask) -> Image {
         if (model->weights.empty() && !model->load(path.c_str())) {
-            fprintf(stderr, "failed to load %s ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â skipping inpaint\n", path.c_str());
+            fprintf(stderr, "failed to load %s - skipping inpaint\n", path.c_str());
             return rgb;
         }
         // upstream inpaint_preprocess: resize <=1024 stride 64, square pad

@@ -1,6 +1,6 @@
 // Milestone 3 of see-through.cpp: the full TransparentVAE decode chain as one
-// ggml graph Ã¢â‚¬â€ SDXL VAE decode -> pixel*0.5+0.5 -> UNet1024 alpha head ->
-// clip(0,1) Ã¢â‚¬â€ validated against upstream TransparentVAEDecoder.forward.
+// ggml graph - SDXL VAE decode -> pixel*0.5+0.5 -> UNet1024 alpha head ->
+// clip(0,1) - validated against upstream TransparentVAEDecoder.forward.
 //
 //   test_trans_vae_full <layerdiff-vae.gguf> <trans-vae.gguf> <reference_trans_vae_full.bin>
 
