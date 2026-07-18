@@ -36,14 +36,21 @@ naive" — currently gated to GPU-only because of this divergence.
 ## 3. Vulkan ggml_conv_2d_direct silently returns zeros at large spatial sizes
 
 `ggml_conv_2d_direct` (f32 kernel, k3 s1 p1) matches the im2col+mul_mat
-path at 512x512 and below, but at ~1280x1280 the Vulkan backend returns
-all-zero output with no error or assert. (The op also differs numerically
-from im2col for the stride-2/pad-0 + asymmetric-`ggml_pad` encoder pattern,
-magnitude ~3.6 — possibly out-of-contract usage, but it fails silently
-rather than asserting.)
+path at 512x512 and below; a zero-output symptom was observed at ~1280x1280
+during the original decode-stage debugging (which is why decode uses
+row-chunked im2col, not direct conv, at pixel resolution). (The op also
+differs numerically from im2col for the stride-2/pad-0 + asymmetric-
+`ggml_pad` encoder pattern, magnitude ~3.6 — possibly out-of-contract usage,
+but it fails silently rather than asserting.)
 
-Repro: `tests/test_graph_properties.cpp`, fixed regression block
-"direct conv at 1280^2 is not zero" (run with a Vulkan build).
+Note: re-verified via the Lean witness gate (`verify/Verify.lean`,
+`st_witness_check_flat`) at the exact original shape (1280x1280, C=4, OC=4,
+k3 s1 p1) with a fresh random witness — it did NOT reproduce (interval
+~0.07, contained). The original repro (deleted `tests/test_graph_properties.
+cpp`) never hard-asserted on this case either (informational printf only).
+Treat as data/seed-dependent rather than deterministic; the row-chunked
+decode path remains the mitigation regardless, so no action is blocked on
+this.
 
 ## Remediation policy
 
