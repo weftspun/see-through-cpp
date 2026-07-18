@@ -11,3 +11,6 @@ target_link_libraries(test_trans_vae PRIVATE ggml)
 
 add_executable(test_sd_vae src/test_sd_vae.cpp)
 target_link_libraries(test_sd_vae PRIVATE ggml)
+
+add_executable(test_trans_vae_full src/test_trans_vae_full.cpp)
+target_link_libraries(test_trans_vae_full PRIVATE ggml)

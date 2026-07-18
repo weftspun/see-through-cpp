@@ -24,6 +24,12 @@ scripts first, single-file library later, no PyTorch at runtime.
   `uv run --index https://download.pytorch.org/whl/cpu --index-strategy
   unsafe-best-match --with torch --with diffusers --with numpy python ...`);
   then `./build/test_sd_vae layerdiff-vae.gguf reference_sd_vae.bin`.
+- The **full TransparentVAE decode chain** (SDXL VAE decode → ×0.5+0.5 →
+  UNet1024 → clip) runs as one composed ggml graph
+  (`src/test_trans_vae_full.cpp`, 2670 nodes) and validates against upstream
+  `TransparentVAEDecoder.forward` end-to-end: max abs diff 2.4e-3 at 256px
+  (`gen_reference_trans_vae_full.py`; then `./build/test_trans_vae_full
+  layerdiff-vae.gguf trans-vae.gguf reference_trans_vae_full.bin`).
 - Port note: upstream `TransparentVAEDecoder.estimate_augmented` contains a
   `break` after the first flip/rot combination — the 8-way ensemble is
   effectively a single identity pass (median of one), so the C++ decode path
