@@ -20,10 +20,12 @@ pin one point of that space; property tests must cover the envelope.
 Policy:
 
 1. Each subgraph in the DAG (conv, token attention) has a witness case in
-   `verify/Verify.lean`'s `productionDomain`, spanning the **production
+   `verify/KernelGate.lean`'s `productionDomain`, spanning the **production
    envelope** — including the 1280px shapes (160×160 latents, 80×80×13-frame
    token counts, 1280² decode) — checked via the `seethrough_c` FFI
-   (`st_witness_check_flat`) on the primary device.
+   (`st_witness_check_flat`) on the primary device. `verify/QuantDesign.lean`
+   applies the same FFI as a design-space search rather than a hard gate
+   (see Hardening below).
 2. A knob may be enabled in the pipeline only for configurations inside its
    gated envelope. Enabling it for a new shape/backend first extends
    `productionDomain` (this is the invariant that would have blocked the
@@ -72,7 +74,18 @@ Policy:
       are deleted.
 - [x] Lean `verify/` witness gate linked and passing: `seethrough_c`
       rebuilt with the `ST_API` exports, `lake build` links clean, `lake exe
-      verify` reports VERIFY PASS over all 15 `productionDomain` cases.
+      kernel_gate` reports VERIFY PASS over all 15 `productionDomain` cases.
+- [x] Q4_0 quantization: `convert_diffusers_to_gguf.py --ftype 2` quantizes
+      nn.Linear weights (self/cross-attn, GEGLU FF; conv/norms/biases stay
+      f16/f32, matching upstream's own NF4 scope). Verified bit-exact
+      against ggml's `quantize_row_q4_0_ref`; loading needs no C++ changes
+      (native gguf.h reader + `ggml_mul_mat` already handle quantized src0
+      on Vulkan). `verify/QuantDesign.lean` searches 12 real
+      `layerdiff-unet` Linear shapes — all within a 15% design tolerance
+      (measured ~7.5-10%). Requantized layerdiff-unet/marigold-unet/
+      layerdiff-te2/marigold-te: 12.65GB -> 4.86GB (61.6%). A 512px/4-step
+      smoke run with the quantized weights produced coherent layers (clear
+      hair strands, clothing) — not yet run at full 1280px/30-step scale.
 
 ### Repo layout
 
