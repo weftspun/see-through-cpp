@@ -51,12 +51,23 @@ Policy:
       out gallocr input-recycling (all inputs already re-set every
       compute) and scheduler numerics (per-step lat mean/std decay
       smoothly, no NaN/blowup). See docs/ggml-upstream-issues.md item 4.
-- [ ] Fix the 1280px collapse: needs a row-chunked (or otherwise
-      composed) replacement for `direct_conv` at just the UNet's 160x160
-      level — disabling `direct_conv` outright OOMs (5.75GB single alloc
-      fails), so this needs real engineering (the existing row-chunk conv
-      requires batch=1; the UNet's cross-frame tensors are batch=13),
-      not a flag flip.
+- [x] Tried and ruled out `direct_conv` as the 1280px collapse's cause:
+      extended row-chunked im2col to be batch>1-generic and routed it
+      ahead of `direct_conv` for the UNet's stride-1 convs at all 3
+      latent levels (real engineering, not a flag flip — the old
+      row-chunk code hardcoded batch=1). New Lean witness cases
+      (`unet-rowchunk-*-b13`) confirm the generalization is itself exact
+      at the real batch=13 shape — but a full 1280px run with the fix in
+      place shows the *same* collapse. Kept the code (independently
+      correct, removes a latent-shape blind spot) but it isn't the fix.
+- [ ] Fix the 1280px collapse: `direct_conv` is excluded; `flash_attn` is
+      the only remaining resolution-scaling UNet knob, but disabling it
+      to test in isolation OOMs the same way `direct_conv` did (~21.3GB
+      single alloc, no VRAM headroom for naive attention at production
+      batch/token counts). Paused pending either a Lean witness case
+      backed by the real loaded checkpoint (not synthetic weights) or a
+      VRAM-safe composed replacement for naive attention at this scale —
+      see docs/ggml-upstream-issues.md item 4's "Status: paused" note.
 - [x] Found and fixed a related bug while bisecting: the CLI crashed
       (unhandled `abort()`, hanging MSVC dialog) on any `--res`/
       `--depth-res` not a multiple of the VAE decoders' required stride

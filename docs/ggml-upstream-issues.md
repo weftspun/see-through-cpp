@@ -77,13 +77,36 @@ never the real trained checkpoint. A real-weight-specific numerical edge
 case (e.g. triggered by specific value ranges/magnitudes absent from
 N(0,0.5) test data) at this one shape is the leading hypothesis.
 
-Not yet confirmed: disabling `direct_conv` outright to test this directly
-OOMs immediately (a single 5.75GB allocation for the 160x160 level's im2col
-fallback fails — no VRAM headroom once other models/buffers are loaded),
-so the isolation test needs a real replacement (row-chunked conv at just
-this level, extended to handle the UNet's batch>1 cross-frame tensors,
-unlike the existing row-chunk code which requires `ne[3]==1`) rather than
-a flag flip. Tracked as an open item.
+Update: `direct_conv` is now **ruled out**. Extended row-chunked im2col to
+pass batch through untouched (was hardcoded to 1) and routed it ahead of
+`direct_conv` for the UNet's stride-1 convs (`direct_conv` stays only as
+the fallback for the stride-2 downsamplers, which row-chunk doesn't
+handle). New Lean witness cases (`unet-rowchunk-*-b13`, real batch=13,
+all 3 latent levels) confirm this generalization is itself exact (interval
+0.0) — so the row-chunk code is correct, not the source of any bug. But a
+full 1280px run with this fix in place shows the *same* collapse
+(`topwear` still ~854x70). Conclusion: `direct_conv` was never the cause;
+the row-chunk swap is kept anyway (independently correct, removes a
+latent-shape blind spot for the future) but did not fix this bug.
+
+That leaves `flash_attn` as the only other resolution-scaling knob, and
+it has the identical problem `direct_conv` did: disabling it to test in
+isolation OOMs immediately (~21.3GB single allocation, matching the
+"naive 80x80 spatial attention is ~21GB at 1280px" comment in
+`pipeline.cpp`) — no VRAM headroom to run the naive-attention fallback at
+production batch/token counts. The existing Lean flash witness cases
+(`flash-t6400-*`, `flash-t1600-*`) already happen to match res=1280's real
+attention token counts (80x80 and 40x40 levels) with synthetic weights and
+pass cleanly, so if `flash_attn` is the cause, it's the same class of
+"synthetic-weights-only-validated" blind spot as the `direct_conv`
+hypothesis was — untestable without either a Lean witness case backed by
+the *real* loaded checkpoint weights (not yet built), or another
+VRAM-safe composed replacement for naive attention at this scale.
+
+Status: paused. Both resolution-scaling UNet knobs have been checked as
+thoroughly as a simple enable/disable toggle allows; neither confirms nor
+excludes `flash_attn`, and `direct_conv` is excluded. Root cause of the
+1280px collapse remains open.
 
 ## Remediation policy
 

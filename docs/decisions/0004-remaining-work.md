@@ -67,6 +67,15 @@ MADR 0006.
       12.65GB -> 4.86GB (61.6%); a 512px/4-step smoke run with the
       quantized weights produced coherent layers (clear hair strands,
       clothing) — see MADR 0005.
+- [x] `pipe_backend` refuses to silently fall back to CPU when no Vulkan
+      device is found and `--device cpu` wasn't explicitly requested —
+      GPU is the primary target per project policy, not an implicit-on-
+      failure fallback.
+- [x] SVG `<image>` elements carry a semantic `id` (sanitized tag name,
+      e.g. `id="topwear"`; depth-group counterparts use `id="depth-
+      <tag>"`) alongside the existing `data-tag` attribute, so SVG
+      consumers (e.g. a future ThorVG-based collation tool) can look
+      layers up by id.
 
 ## Consequences
 
