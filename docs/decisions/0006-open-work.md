@@ -54,8 +54,10 @@ Policy:
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning
 - [ ] Upstream parity: `inference_psd.py --save_to_psd` on the same
-      seed/input; per-layer alpha-mask IoU (>0.98 where tags match) + depth
-      ordering
+      seed/input (upstream only emits PSD; we don't reintroduce a PSD
+      writer for this — extract per-layer alpha masks from the PSD and
+      compare against our SVG's `<image>` PNGs / `--png-dir` output) —
+      per-layer alpha-mask IoU (>0.98 where tags match) + depth ordering
 - [ ] Full-quality run with the Q4_0-quantized models (currently only
       smoke-tested at 512px/4 steps) — same 1280px/30-step + upstream
       parity bar as the f16 baseline, see MADR 0005
