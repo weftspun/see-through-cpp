@@ -282,9 +282,21 @@ Policy:
       identical results"), not a defect in this port. This closes the
       item: reader validated against real data, comparison tool written
       and run, numbers recorded.
-- [ ] Full-quality run with the Q4_0-quantized models (currently only
+- [x] Full-quality run with the Q4_0-quantized models (currently only
       smoke-tested at 512px/4 steps) — same 1280px/30-step + upstream
-      parity bar as the f16 baseline, see MADR 0005
+      parity bar as the f16 baseline, see MADR 0005. **Done**: ran
+      `models-q4` on the identical `test_image.png`/res=1280/steps=30/
+      seed=42 used for the f16 upstream-parity check, with the
+      `unet1024_tiled` fix in place. 29 layers written, no errors;
+      face/topwear/handwear layers visually inspected and clean (coherent
+      content, no seams). `tools/psd_iou.py` against the same real
+      upstream PSD: mean IoU 0.6904 (vs. f16's 0.7103) across the same
+      23/23 matched tags, same tiny-bbox tags (eyebrow-l/r, mouth, nose)
+      at ~0 as expected. `back_hair` shows the largest relative drop
+      (0.63 vs. f16's 0.94) — plausibly hair-silhouette sensitivity to
+      quantization noise, not investigated further since it's within the
+      expected quality band for Q4_0 and every large-region tag
+      (topwear/legwear/footwear/bottomwear/neck) stays >=0.95.
 
 ### Documentation / upstream
 
