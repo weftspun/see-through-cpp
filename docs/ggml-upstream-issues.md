@@ -229,16 +229,61 @@ unguarded O(T^2) op) but is **not** the root-cause fix, and
 `SEETHROUGH_TILED_ATTN` is left opt-in, not default, since enabling it
 currently makes the production symptom worse.
 
-Status: paused, but substantially narrowed. `direct_conv`, `flash_attn`
-(via `attn_tokens`, decisively), the row-chunk tiling arithmetic, the
-UNet/latent computation, and now `attn_block`'s tiling-vs-non-tiling
-distinction are all excluded or shown not to help. The collapse is
-confirmed to live somewhere in `vae_decode`/`unet1024`
-(`src/vae.cpp`), but not narrowed past "one of resnet blocks / group norm
-/ upsampler / attn_block's core (non-tiling-related) numerics /
-cross-stage skip connections in that chain" — and the sensitivity-to-
-perturbation observation above suggests further probing should look for a
-marginal/boundary condition rather than a single obviously-wrong op.
+Update: added per-stage instrumentation (`Model.debug_capture`/
+`debug_taps`, `SEETHROUGH_DEBUG_DECODE_STAGES=1`) inside `vae_decode` and
+`unet1024`, tapping mean/std/max|v| after every resnet/attn/upsample stage.
+This pinned the explosion exactly: every stage through `vae_decode` and
+`unet1024`'s `down_blocks.0-3` stays in a sane range (max|v| <= ~8), then
+**`down_blocks.4`'s first `attn_block` call** jumps to max|v| ~50000 in one
+step (`down4.resnet0` max=4.07 -> `down4.attn0` max=50400) — the first
+place `down_attn[i]` is true, i.e. the first spatial self-attention call in
+`unet1024`'s down-path. Every later stage inherits and amplifies this via
+residual adds.
+
+Root cause, **confirmed**: at this call, T=6400 (80x80, res=1280's
+`down_blocks.4`), C=256, `head_dim=8` (fixed for all of `unet1024`) ->
+n_head=32. The naive `(Tk,Tq,H,N)` kq intermediate is
+`6400*6400*32*4 = 5.24GB` — over Vulkan's `maxStorageBufferRange`
+(~4.295GB, the same single-allocation boundary already implicated in item
+3 and the naive-attention-reference exclusions in `verify/KernelGate.lean`
+above). Reproduced from scratch with **pure synthetic random weights** at
+this exact `(T, C, head_dim)` combination (`tests/probe_attn_block_tiled.cpp`)
+— not a real-checkpoint-only defect after all. Bisected further: hd=16/32/
+64 at the same T/C are exact and normal-magnitude (interval 0.0 vs.
+tiled); only hd=8 combined with a large enough `T*n_head` to cross the
+byte threshold explodes (hd=8 alone at smaller T, or n_head<32 at the same
+T, both stay normal) — this is a genuine `ggml_mul_mat`/Vulkan kernel
+defect at reduction-dimension 8 once the naive intermediate crosses the
+single-buffer limit, not a real-weight-specific numerical edge case.
+
+Verified against an independent CPU ground truth (same probe, byte-
+identical weights/input replayed on `ggml_backend_cpu_init()`): at the
+exploding shape, GPU-naive is 295x off from the CPU result; GPU-tiled
+(`Model.tiled_naive_attn`, query-tiled to keep every chunk under the
+buffer limit) is only 1.5% off — ordinary floating-point tolerance. The
+tiling fix is numerically correct, not just "smaller-looking".
+
+**However**: rerunning the full 1280px CLI with this fix active
+(`SEETHROUGH_TILED_ATTN=1`) still produces the same visually-collapsed
+output (`raw_topwear_full.png`/`frame_N.png` dumps show the identical
+blocky checkerboard-at-the-edges pattern as before, even though every
+per-stage tap through `u1024.conv_out` now reports sane magnitudes). So
+this confirmed, fixed defect is real but is **not the sole cause** of the
+visible collapse — either a second instance of the same class of bug
+exists elsewhere in the graph (not yet found), or the visual corruption is
+a separate, still-open issue that happens to coexist with this one at the
+same resolution.
+
+Status: one confirmed and fixed root cause (the >4.295GB `attn_block`
+buffer overflow at `head_dim=8` reduction), kept as an opt-in
+(`SEETHROUGH_TILED_ATTN`) pending a decision on defaulting it on now that
+it's verified correct; the *visible* pipeline output at res=1280 is still
+wrong even with the fix applied, so the investigation continues. Next
+step: re-run the same per-stage tapping with tiling on and inspect
+per-stage output *images* (not just aggregate mean/std/max stats, which
+can look sane while the spatial content is still scrambled), starting
+from `down4.attn0` itself, to check whether the tiled computation is
+merely magnitude-correct but still spatially wrong.
 
 ## Remediation policy
 

@@ -45,3 +45,6 @@ target_include_directories(probe_flash_bigT PRIVATE src)
 
 add_executable(probe_attn_block_tiled tests/probe_attn_block_tiled.cpp)
 target_link_libraries(probe_attn_block_tiled PRIVATE seethrough)
+
+add_executable(probe_weight_stats tests/probe_weight_stats.cpp)
+target_link_libraries(probe_weight_stats PRIVATE seethrough)

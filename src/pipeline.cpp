@@ -379,15 +379,34 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
             ggml_tensor * zt = nullptr;
             std::vector<std::vector<float>> outs;
+            // diagnostic for docs/ggml-upstream-issues.md #4: bisect where
+            // in the decode chain (vae_decode / unet1024) the 1280px
+            // collapse first appears -- frame 0 only, to keep output sane
+            mv.debug_capture = f == 5 && getenv("SEETHROUGH_DEBUG_DECODE_STAGES") != nullptr;
+            mv.debug_taps.clear();
             bool ok = run_graph_dev(cfg, mv, 32768,
                 [&]() {
                     zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
-                    return std::vector<ggml_tensor *>{ trans_vae_decode(mv, zt) };
+                    ggml_tensor * out = trans_vae_decode(mv, zt);
+                    std::vector<ggml_tensor *> outs_t = { out };
+                    for (auto & kv : mv.debug_taps) { outs_t.push_back(kv.second); }
+                    return outs_t;
                 },
                 [&]() { ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4); },
                 outs);
             if (!ok) return false;
+            if (mv.debug_capture) {
+                for (size_t t = 0; t < mv.debug_taps.size(); t++) {
+                    const std::vector<float> & v = outs[t + 1];
+                    double acc = 0, acc2 = 0, amax = 0;
+                    for (float x : v) { acc += x; acc2 += (double) x * x; amax = std::max(amax, (double) fabs(x)); }
+                    double mu = v.empty() ? 0 : acc / v.size();
+                    double sd = v.empty() ? 0 : sqrt(std::max(0.0, acc2 / v.size() - mu * mu));
+                    printf("[debug] decode stage %-20s n=%8zu mean=%.5f std=%.5f max|v|=%.5f\n",
+                           mv.debug_taps[t].first.c_str(), v.size(), mu, sd, amax);
+                }
+            }
             // planar RGBA -> interleaved RGBA
             Image & im = layers_out[f];
             im.w = im.h = RES; im.c = 4;
