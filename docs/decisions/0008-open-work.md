@@ -72,10 +72,19 @@ Policy:
       **all of them** are uniformly flat at res=1280 (checked front hair,
       head, topwear, tail) — ruling out a single bad per-tag prompt/
       embedding and pointing at something structural across the whole
-      batch, most likely `cross_frame_block` (the cross-frame mixing
-      attention). Not yet tested in isolation (e.g. a bypass toggle,
-      mirroring how `direct_conv`/`flash_attn` were excluded). See
-      docs/ggml-upstream-issues.md item 4's latest status note.
+      batch. Tested `cross_frame_block` in isolation via a bypass toggle
+      (`SEETHROUGH_NO_CROSSFRAME=1`) — **excluded**: the exact same
+      checkerboard-at-the-edges artifact, in the exact same screen
+      position, persists with cross-frame mixing entirely disabled.
+      `direct_conv`, `flash_attn`/`tiled_naive_attn`, and now
+      `cross_frame_block` have all been individually excluded, yet the
+      artifact is completely unchanged across all of them — a fixed,
+      computation-invariant screen position strongly suggests a
+      **positional/coordinate-embedding bug** (timestep or positional
+      embeddings, or a padding/tiling coordinate calculation) rather than
+      a content-computation defect in any op path tried so far. This is
+      the next angle to investigate. See docs/ggml-upstream-issues.md item
+      4's latest status note.
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,
       not currently reproducible**: audited every L/R-split tag

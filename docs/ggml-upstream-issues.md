@@ -331,19 +331,36 @@ points at something structural that acts uniformly across the whole
 `unet_frame.cpp`, which mixes information *across* the frame axis) is the
 leading remaining suspect, though not yet directly tested in isolation.
 
+Update: added a bypass toggle (`SEETHROUGH_NO_CROSSFRAME=1`, in
+`transformer3d`, `unet_frame.cpp`) that skips the `cross_frame_block` add
+entirely, and reran the full 1280px CLI with it. Result: **the visual
+collapse is unchanged** — `topwear`/`face` show the exact same
+checkerboard-at-the-edges pattern in the exact same screen position as
+every prior attempt. `cross_frame_block` is excluded. (One incidental
+side effect: layer count went from 12 to the full 28 — the head-region
+alpha crossed `bbox_alpha`'s detection threshold this time — but the
+underlying image content is identical garbage; this was a threshold
+side-effect, not a real fix.)
+
+This is a meaningful new clue on its own: disabling `direct_conv`,
+`flash_attn`/`tiled_naive_attn`, and now `cross_frame_block` all leave the
+*exact same* artifact, in the *exact same* screen position, regardless of
+which internal computation path produced it. A fixed-position artifact
+that's invariant to changes in the content-generating computation (which
+attention/conv path runs) smells more like a **positional/coordinate**
+bug — e.g. positional or timestep embeddings, or a padding/tiling
+coordinate calculation — than a content-computation defect in any of the
+op paths tested so far. Not yet investigated from that angle.
+
 Status: one confirmed and fixed root cause **for a different, real bug**
 (the >4.295GB `attn_block` buffer overflow at `head_dim=8` reduction in
 `unet1024`), kept as an opt-in (`SEETHROUGH_TILED_ATTN`). The 1280px
-visual collapse is confirmed to originate in the main diffusion UNet
-(not VAE decode), affects all 13 frames uniformly (not a per-tag issue),
-and neither per-step eps visualizations nor aggregate mean/std stats can
-distinguish it from a correct run — only the final per-frame latent
-content shows the defect. Next concrete step: isolate `cross_frame_block`
-specifically (e.g. a toggle to bypass it, or tap its output directly
-rather than only the resnet/attn stages already tapped) to test whether
-disabling cross-frame mixing changes the outcome, the same
-disable-and-compare technique already used to exclude `direct_conv` and
-`flash_attn` earlier in this doc.
+visual collapse is confirmed to originate in the main diffusion UNet (not
+VAE decode), affects all 13 frames uniformly, and is invariant to
+`direct_conv`/`flash_attn`/`tiled_naive_attn`/`cross_frame_block` all
+being individually excluded — the fixed screen-position artifact across
+every variant tested points toward a positional/coordinate-embedding bug
+as the next angle to investigate, rather than another op-path toggle.
 
 ## Remediation policy
 

@@ -137,7 +137,12 @@ ggml_tensor * transformer3d(Model & m, ggml_tensor * x, ggml_tensor * ehs,
         h = basic_transformer_block(m, h, ehs, bpre, n_head);
         if ((l + 1) % stride == 0) {
             const std::string tpre = pre + ".temporal_transformer_blocks." + std::to_string(n_temporal++);
-            h = ggml_add(ctx, h, cross_frame_block(m, h, tpre, n_head));
+            // diagnostic bypass for docs/ggml-upstream-issues.md #4: is the
+            // res=1280 all-frames-uniformly-flat collapse caused by
+            // cross-frame mixing specifically?
+            if (!getenv("SEETHROUGH_NO_CROSSFRAME")) {
+                h = ggml_add(ctx, h, cross_frame_block(m, h, tpre, n_head));
+            }
         }
     }
 
