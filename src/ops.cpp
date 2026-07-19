@@ -104,19 +104,16 @@ ggml_tensor * bias4d(ggml_context * ctx, ggml_tensor * b) {
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int stride, int pad) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * w = m.get(pre + ".weight");
-    // low-VRAM mode: direct conv — the im2col transients dominate the 1280px
-    // graphs (up to 5.7GB each)
-    if (m.direct_conv) {
-        ggml_tensor * r = ggml_conv_2d_direct(ctx, w, x, stride, stride, pad, pad, 1, 1);
-        if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
-        return r;
-    }
-    // decode-stage low-VRAM mode: exact im2col numerics, tiled over output
-    // rows with a halo so every transient stays ~NCH times smaller. Only for
-    // the stride-1 pad-1 k3 convs at big spatial sizes.
-    if (m.conv_row_chunk && stride == 1 && pad == 1 && x->ne[3] == 1 &&
-        w->ne[0] == 3 && x->ne[0] * x->ne[1] >= 256 * 256) {
-        const int64_t W = x->ne[0], H = x->ne[1], C = x->ne[2];
+    // decode-stage / UNet low-VRAM mode: exact im2col numerics, tiled over
+    // output rows with a halo so every transient stays ~NCH times smaller.
+    // Only for the stride-1 pad-1 k3 convs at big spatial sizes. Batch (N)
+    // is passed through untouched -- im2col/mul_mat/concat are already
+    // batch-generic, this just tiles the row dimension. Tried before
+    // direct_conv: the UNet enables both (direct_conv as the fallback for
+    // the stride-2 downsampler convs this path doesn't handle).
+    if (m.conv_row_chunk && stride == 1 && pad == 1 &&
+        w->ne[0] == 3 && x->ne[0] * x->ne[1] >= m.conv_row_chunk_min_hw) {
+        const int64_t W = x->ne[0], H = x->ne[1], C = x->ne[2], N = x->ne[3];
         const int64_t NCH = 8, TS = (H + NCH - 1) / NCH;
         bool rc = m.conv_row_chunk;
         m.conv_row_chunk = false;
@@ -125,7 +122,7 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
             const int64_t y1 = std::min(y0 + TS, H);
             const int64_t top = y0 > 0 ? y0 - 1 : 0;           // halo rows
             const int64_t bot = y1 < H ? y1 + 1 : H;
-            ggml_tensor * slab = ggml_view_4d(ctx, x, W, bot - top, C, 1,
+            ggml_tensor * slab = ggml_view_4d(ctx, x, W, bot - top, C, N,
                                               x->nb[1], x->nb[2], x->nb[3],
                                               top * x->nb[1]);
             slab = ggml_cont(ctx, slab);
@@ -148,7 +145,7 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
                     ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
                 r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
                 ggml_tensor * full = ggml_cont(ctx, ggml_permute(ctx, r, 0, 1, 3, 2));
-                ys = ggml_cont(ctx, ggml_view_4d(ctx, full, W, y1 - y0, w->ne[3], 1,
+                ys = ggml_cont(ctx, ggml_view_4d(ctx, full, W, y1 - y0, w->ne[3], N,
                                                  full->nb[1], full->nb[2], full->nb[3],
                                                  (y0 - top) * full->nb[1]));
             }
@@ -166,6 +163,14 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
         m.conv_row_chunk = rc;
         if (m.has(pre + ".bias")) acc = ggml_add(ctx, acc, bias4d(ctx, m.get(pre + ".bias")));
         return acc;
+    }
+    // low-VRAM mode: direct conv — the im2col transients dominate the 1280px
+    // graphs (up to 5.7GB each). Fallback for shapes row-chunk doesn't cover
+    // (stride-2 downsamplers, or below conv_row_chunk_min_hw).
+    if (m.direct_conv) {
+        ggml_tensor * r = ggml_conv_2d_direct(ctx, w, x, stride, stride, pad, pad, 1, 1);
+        if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
+        return r;
     }
     // ggml_conv_2d unconditionally rounds activations to f16 in im2col; for
     // f32 weights (SDXL VAE encoder has activations too large for that) keep

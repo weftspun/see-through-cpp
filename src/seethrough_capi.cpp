@@ -127,10 +127,15 @@ std::vector<float> conv_run(Fixture & fx, const st_case & c, bool direct, bool r
                             const std::vector<float> & x) {
     fx.m.direct_conv = direct;
     fx.m.conv_row_chunk = rowchunk;
+    // production floor is 40*40 for the UNet's latent-space convs (see
+    // pipeline.cpp's pipe_load); the default 256*256 only covers decode's
+    // pixel-space sizes, so a batch>1 UNet-shape witness needs this lowered
+    fx.m.conv_row_chunk_min_hw = 40 * 40;
+    const int32_t batch = c.batch > 0 ? c.batch : 1;
     ggml_tensor * xt = nullptr;
     auto r = run1(fx,
         [&]() {
-            xt = ggml_new_tensor_4d(fx.m.ctx_g, GGML_TYPE_F32, c.w, c.h, c.c, 1);
+            xt = ggml_new_tensor_4d(fx.m.ctx_g, GGML_TYPE_F32, c.w, c.h, c.c, batch);
             ggml_set_input(xt);
             return conv2d(fx.m, xt, "w", c.stride, 1);
         },
@@ -205,7 +210,8 @@ double st_witness_check(const st_case * c) {
         Fixture fx(c->seed);
         fx.weight("w.weight", { 3, 3, c->c, c->oc });
         fx.weight("w.bias", { c->oc });
-        std::vector<float> x = fx.randvec((size_t) c->w * c->h * c->c);
+        const int32_t batch = c->batch > 0 ? c->batch : 1;
+        std::vector<float> x = fx.randvec((size_t) c->w * c->h * c->c * batch);
         auto ref = conv_run(fx, *c, false, false, x);
         auto cand = conv_run(fx, *c, c->direct != 0, c->rowchunk != 0, x);
         // budget scales with the 9*C-term reduction

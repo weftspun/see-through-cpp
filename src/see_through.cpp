@@ -369,16 +369,21 @@ int main(int argc, char ** argv) {
         }
         return o;
     };
+    // semantic identifier shared by --png-dir filenames and the SVG's
+    // per-layer <image id="..."> attributes (e.g. ThorVG lookup by id)
+    auto safe_id = [](const std::string & tag) {
+        std::string s = tag;
+        std::replace(s.begin(), s.end(), ' ', '_');
+        return s;
+    };
     // separate PNG layers with the same z order, one file per part
     if (!png_dir.empty()) {
         std::filesystem::create_directories(png_dir);
         int pzi = 0;
         for (const Part * p : ordered) {
-            std::string safe_tag = p->tag;
-            std::replace(safe_tag.begin(), safe_tag.end(), ' ', '_');
             char name[32];
             std::snprintf(name, sizeof(name), "%03d_", pzi);
-            std::string path = png_dir + "/" + name + safe_tag + ".png";
+            std::string path = png_dir + "/" + name + safe_id(p->tag) + ".png";
             std::vector<uint8_t> png = encode_png(p->img);
             std::ofstream f(path, std::ios::binary);
             f.write(reinterpret_cast<const char *>(png.data()), (std::streamsize) png.size());
@@ -394,7 +399,8 @@ int main(int argc, char ** argv) {
     int zi = 0;
     for (const Part * p : ordered) {
         std::string png = b64(encode_png(p->img));
-        svg << "  <image x=\"" << p->xyxy[0] << "\" y=\"" << p->xyxy[1]
+        svg << "  <image id=\"" << safe_id(p->tag) << "\" x=\"" << p->xyxy[0]
+            << "\" y=\"" << p->xyxy[1]
             << "\" width=\"" << p->img.w << "\" height=\"" << p->img.h
             << "\" data-tag=\"" << p->tag << "\" data-z=\"" << zi
             << "\" data-depth-median=\"" << p->depth_median
@@ -407,7 +413,8 @@ int main(int argc, char ** argv) {
         Image d1;
         d1.w = p->depth.w; d1.h = p->depth.h; d1.c = 1;
         d1.data = p->depth.data;
-        svg << "    <image x=\"" << p->xyxy[0] << "\" y=\"" << p->xyxy[1]
+        svg << "    <image id=\"depth-" << safe_id(p->tag) << "\" x=\"" << p->xyxy[0]
+            << "\" y=\"" << p->xyxy[1]
             << "\" width=\"" << d1.w << "\" height=\"" << d1.h
             << "\" data-tag=\"" << p->tag << "\" data-z=\"" << zi
             << "\" xlink:href=\"data:image/png;base64," << b64(encode_png(d1))

@@ -25,6 +25,12 @@ def productionDomain : Array Case := #[
   conv "decode-rowchunk-1280-64"  1280 1280 4 4 1 2,
   conv "decode-rowchunk-640-128"  640 640 8 8 1 2,
   conv "decode-rowchunk-320-256"  320 320 16 16 1 2,
+  -- UNet row-chunked im2col (batch>1, replaces direct_conv for the
+  -- stride-1 convs since docs/ggml-upstream-issues.md #4) at the real
+  -- cross-frame batch size (13 frames), all 3 latent levels
+  conv "unet-rowchunk-160-320-b13" 160 160 320 320 1 2 13,
+  conv "unet-rowchunk-80-640-b13"  80  80  640 640 1 2 13,
+  conv "unet-rowchunk-40-1280-b13" 40  40  1280 1280 1 2 13,
   -- flash attention at every spatial token count / frame batch
   attn "flash-t1600-b13"  10 1600 1600 13 4,
   -- b13 at T=6400 needs an intractable naive reference (6400x6400x10x13 f32

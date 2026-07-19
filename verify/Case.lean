@@ -39,8 +39,8 @@ def Case.check (cs : Case) (seed : UInt64) : Float :=
   stWitnessCheckFlat cs.op cs.w cs.h cs.c cs.oc cs.stride cs.heads cs.tq cs.tk
     cs.batch cs.knobs seed
 
-def conv (name : String) (w h c oc stride knobs : UInt32) : Case :=
-  { name, op := 0, w, h, c, oc, stride, knobs }
+def conv (name : String) (w h c oc stride knobs : UInt32) (batch : UInt32 := 1) : Case :=
+  { name, op := 0, w, h, c, oc, stride, knobs, batch }
 
 def attn (name : String) (heads tq tk batch knobs : UInt32) : Case :=
   { name, op := 1, heads, tq, tk, batch, knobs }

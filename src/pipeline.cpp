@@ -48,6 +48,14 @@ static ggml_backend_dev_t pipe_gpu(const PipelineConfig & cfg) {
 static ggml_backend_t pipe_backend(const PipelineConfig & cfg) {
     ggml_backend_dev_t d = pipe_gpu(cfg);
     if (d) return ggml_backend_dev_init(d, nullptr);
+    if (cfg.device != "cpu") {
+        // GPU is the primary target; CPU is an explicit opt-in only
+        // (--device cpu), never a silent fallback when Vulkan isn't found
+        fprintf(stderr, "error: no GPU device found (Vulkan) and --device cpu was not "
+                        "requested -- refusing to silently fall back to CPU. Pass "
+                        "--device cpu if you really want a CPU run.\n");
+        exit(1);
+    }
     ggml_backend_t b = ggml_backend_cpu_init();
     ggml_backend_cpu_set_n_threads(b, cfg.threads);
     return b;
@@ -58,10 +66,24 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
     ggml_backend_dev_t d = pipe_gpu(cfg);
     if (d) {
         if (unet) {
-            m.flash_attn = true;    // naive 80x80 spatial attention is ~21GB at 1280px
-            m.direct_conv = !getenv("SEETHROUGH_NO_DIRECT_CONV");
-        }                           // VRAM; NOT for VAEs: ggml_conv_2d_direct is
+            m.flash_attn = !getenv("SEETHROUGH_NO_FLASH_UNET");  // naive 80x80 spatial attention is ~21GB at 1280px
+                                    // VRAM; NOT for VAEs: ggml_conv_2d_direct is
                                     // wrong for the encoder s2/p0 downsample path
+            // row-chunked im2col ahead of direct_conv for the stride-1 k3
+            // resnet convs: suspected real-weight-specific
+            // ggml_conv_2d_direct defect at exactly the 160x160/res=1280
+            // latent level (docs/ggml-upstream-issues.md #4) -- row-chunk
+            // is Lean-witness-validated exact and, unlike plain im2col,
+            // doesn't reintroduce the ~5.75GB per-level transient that
+            // direct_conv was avoiding (tiled 8-way, batch(frames)-
+            // generic). min_hw covers all 3 UNet latent levels (as low as
+            // 40x40). direct_conv stays on as the fallback for the
+            // stride-2 downsampler convs, which conv_row_chunk doesn't
+            // handle.
+            m.direct_conv = true;
+            m.conv_row_chunk = !getenv("SEETHROUGH_NO_ROWCHUNK_UNET");
+            m.conv_row_chunk_min_hw = 40 * 40;
+        }
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
     }
     return m.load(path.c_str());

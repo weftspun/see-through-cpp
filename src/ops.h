@@ -31,7 +31,13 @@ struct Model {
                                  // large spatial sizes)
     bool  conv_row_chunk = false; // tile stride-1 k3 convs over output rows
                                   // so im2col transients stay small (exact
-                                  // numerics; decode-stage low-VRAM path)
+                                  // numerics; decode-stage low-VRAM path;
+                                  // also used for the UNet's finest latent
+                                  // level, batch(frames)-generic)
+    int64_t conv_row_chunk_min_hw = 256 * 256;  // spatial-size floor to
+                                  // engage row-chunking; the UNet uses a
+                                  // much lower floor to cover its smaller
+                                  // (but batched) latent-space convs
 
     Model() = default;
     Model(const Model &) = delete;
