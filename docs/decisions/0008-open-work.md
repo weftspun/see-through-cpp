@@ -64,7 +64,17 @@ Policy:
       the remaining suspects (resnet blocks, group norm, upsampler,
       cross-stage skip connections within that chain).
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
-      pad boundary, faint head-pass alphas, alpha floor tuning
+      pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,
+      not currently reproducible**: audited every L/R-split tag
+      (handwear, ears, eyewhite, eyebrow, eyelash, irides) across a fresh
+      30-step 512px run on `assets/sample.png` plus the pre-existing
+      `assets/final30_layers`/`final_svg_layers` outputs from earlier this
+      session — no visible pad-boundary slivers on any of them.
+      `assets/upstream_samples/` (referenced when this item was written) no
+      longer exists locally, so the specific input/pose that motivated this
+      item couldn't be re-tried. Needs either that sample set restored or a
+      concrete repro (which image/tag/seed) before a fix can be targeted —
+      speculative code changes without a visible symptom aren't worth it.
 - [ ] Upstream parity: match our SVG's per-tag layers against upstream's
       output by tag name and compare alpha masks (>0.98 IoU where tags
       match) + depth ordering. Decided against comparing against upstream's
