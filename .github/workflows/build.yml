@@ -50,10 +50,18 @@ jobs:
             -DSEETHROUGH_BUILD_H3_SERVER=ON \
             -DCMAKE_PREFIX_PATH="$extra_prefix"
 
+      - name: Sanity-check glslc (Windows Vulkan diagnostic)
+        if: matrix.backend == 'vulkan' && runner.os == 'Windows'
+        shell: bash
+        run: |
+          "$VULKAN_SDK/Bin/glslc.exe" --version
+          echo 'void main() {}' > /tmp/t.comp
+          "$VULKAN_SDK/Bin/glslc.exe" -fshader-stage=compute --target-env=vulkan1.3 -o /tmp/t.spv /tmp/t.comp
+
       # Core targets must succeed -- these are the actual product.
       - name: Build core
         shell: bash
-        run: cmake --build build --config Release --target see-through --target see-through-server --target seethrough_c --target see_through_c -j
+        run: cmake --build build --config Release -v --target see-through --target see-through-server --target seethrough_c --target see_through_c -j
 
       # The vendored HTTP/3 server has WIN32-specific code paths that were
       # only ever exercised on Windows so far; best-effort elsewhere -- a
