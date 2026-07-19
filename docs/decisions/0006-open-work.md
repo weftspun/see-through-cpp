@@ -43,6 +43,31 @@ Policy:
 
 ### Validation
 
+- [ ] **Fix the 1280px collapse** (raised ahead of the rest of the
+      checklist: confirmed this run to be the sole cause of what looked
+      like a second, separate "content-quality" bug — see below):
+      `direct_conv` is excluded; `flash_attn` is the only remaining
+      resolution-scaling UNet knob, but disabling it to test in isolation
+      OOMs the same way `direct_conv` did (~21.3GB single alloc, no VRAM
+      headroom for naive attention at production batch/token counts).
+      Multi-seed probing (`tests/probe_flash_bigT.cpp`, 8 seeds x every
+      gated shape/batch, Vulkan) found no seed-dependent divergence either
+      -- all comfortably contained. Paused pending either a Lean witness
+      case backed by the real loaded checkpoint (not synthetic weights) or
+      a VRAM-safe composed replacement for naive attention at this scale —
+      see docs/ggml-upstream-issues.md item 4's "Status: paused" note.
+      **Update**: the previously separate-looking symptom of blank
+      face/missing ears in `assets/final_svg_composite.png` and
+      `final30_composite.png` is this same bug, not a distinct one — both
+      composites were generated at the CLI's default `--res` (1280), and
+      re-running at `--res 512` produces a correct face and ears layer
+      (confirmed via `scratch_run512/png/024_face.png` and
+      `023_ears-l.png`). The face/ears layers come from the same head-crop
+      second pass (`see_through.cpp`'s "head crop + pass 2") as topwear
+      etc., so they collapse identically at res=1280 (e.g. `002_face.png`
+      in a 1280px run comes out 853x87, the same thin-band shape as the
+      already-documented `topwear` collapse). No separate "content-quality"
+      investigation is needed — fixing the 1280px collapse fixes both.
 - [x] Diagnosed the 1280px layer collapse: bisected by resolution across
       every valid multiple of 64 (512 through 1216 all clean; only 1280
       collapses) — pins it to something specific about exactly the UNet's
@@ -60,17 +85,6 @@ Policy:
       at the real batch=13 shape — but a full 1280px run with the fix in
       place shows the *same* collapse. Kept the code (independently
       correct, removes a latent-shape blind spot) but it isn't the fix.
-- [ ] Fix the 1280px collapse: `direct_conv` is excluded; `flash_attn` is
-      the only remaining resolution-scaling UNet knob, but disabling it
-      to test in isolation OOMs the same way `direct_conv` did (~21.3GB
-      single alloc, no VRAM headroom for naive attention at production
-      batch/token counts). Multi-seed probing (`tests/probe_flash_bigT.cpp`,
-      8 seeds x every gated shape/batch, Vulkan) found no seed-dependent
-      divergence either -- all comfortably contained. Paused pending
-      either a Lean witness case backed by the real loaded checkpoint (not
-      synthetic weights) or a VRAM-safe composed replacement for naive
-      attention at this scale — see docs/ggml-upstream-issues.md item 4's
-      "Status: paused" note.
 - [x] Found and fixed a related bug while bisecting: the CLI crashed
       (unhandled `abort()`, hanging MSVC dialog) on any `--res`/
       `--depth-res` not a multiple of the VAE decoders' required stride
