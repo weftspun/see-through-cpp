@@ -120,9 +120,10 @@ int main(int argc, char ** argv) {
         if (!save_image(path, img)) { fprintf(stderr, "failed to write %s\n", path.c_str()); }
     }
 
+    unsigned int layerCount = lms->layerCount;
     DestroyLayerMaskSection(lms, &allocator);
     DestroyDocument(document, &allocator);
     file.Close();
-    printf("wrote %u layers to %s\n", lms ? lms->layerCount : 0, argv[2]);
+    printf("wrote %u layers to %s\n", layerCount, argv[2]);
     return 0;
 }

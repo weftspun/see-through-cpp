@@ -1,0 +1,44 @@
+cff-version: 1.2.0
+message: >-
+  This is a C++/ggml port of the See-Through pipeline. If you use it,
+  please cite the original paper below.
+title: see-through.cpp
+type: software
+url: "https://github.com/weftspun/see-through-cpp"
+license: Apache-2.0
+preferred-citation:
+  type: article
+  title: "See-through: Single-image Layer Decomposition for Anime Characters"
+  authors:
+    - family-names: Lin
+      given-names: Jian
+    - family-names: Li
+      given-names: Chengze
+    - family-names: Qin
+      given-names: Haoyun
+    - family-names: Chan
+      given-names: Kwun Wang
+    - family-names: Jin
+      given-names: Yanghua
+    - family-names: Liu
+      given-names: Hanyuan
+    - family-names: Choy
+      given-names: Stephen Chun Wang
+    - family-names: Liu
+      given-names: Xueting
+  journal: "arXiv preprint arXiv:2602.03749"
+  year: 2026
+  url: "https://arxiv.org/abs/2602.03749"
+  repository-code: "https://github.com/weftspun/see-through"
+references:
+  - type: software
+    title: See-Through (upstream PyTorch reference implementation)
+    authors:
+      - name: "Shitagaki Lab"
+    repository-code: "https://github.com/weftspun/see-through"
+    license: Apache-2.0
+  - type: software
+    title: "ComfyUI-See-through (test assets and community fork)"
+    authors:
+      - name: jtydhr88
+    repository-code: "https://github.com/jtydhr88/ComfyUI-See-through"
