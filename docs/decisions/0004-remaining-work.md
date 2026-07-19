@@ -8,7 +8,7 @@
 M1–M13 of the port plan are implemented; every component has a numeric gate
 against the upstream PyTorch pipeline (see README status table). This record
 lists what was completed during the close-out; everything still open lives in
-MADR 0007.
+MADR 0006.
 
 ## Completed
 
@@ -80,4 +80,4 @@ MADR 0007.
 ## Consequences
 
 Open items — including final validation on the upstream sample — are tracked
-in MADR 0007.
+in MADR 0006.
