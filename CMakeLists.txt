@@ -9,6 +9,21 @@ add_compile_definitions(GGML_MAX_NAME=128)
 
 add_subdirectory(third_party/ggml)
 
+# psd_sdk's own CMakeLists.txt requires a cmake_minimum_required too old for
+# current CMake; compile its sources directly instead of add_subdirectory
+# (read-only usage: PsdExport*/PsdNativeFile writer bits aren't needed for
+# our upstream-parity reader, but bringing the whole psd_source list in is
+# simplest and matches how the upstream project itself builds it)
+set(PSD_SDK_DIR third_party/psd_sdk/src/Psd)
+file(GLOB PSD_SDK_SOURCES ${PSD_SDK_DIR}/*.cpp ${PSD_SDK_DIR}/*.c)
+if (WIN32)
+    list(FILTER PSD_SDK_SOURCES EXCLUDE REGEX ".*NativeFile_(Mac|Linux)\\.cpp$")
+else()
+    list(FILTER PSD_SDK_SOURCES EXCLUDE REGEX ".*NativeFile\\.cpp$")
+endif()
+add_library(Psd STATIC ${PSD_SDK_SOURCES})
+target_include_directories(Psd PUBLIC third_party/psd_sdk/src)
+
 add_library(seethrough STATIC
     src/ops.cpp
     src/vae.cpp
@@ -48,3 +63,8 @@ target_link_libraries(probe_attn_block_tiled PRIVATE seethrough)
 
 add_executable(probe_weight_stats tests/probe_weight_stats.cpp)
 target_link_libraries(probe_weight_stats PRIVATE seethrough)
+
+add_executable(psd_layers tests/psd_layers.cpp)
+target_link_libraries(psd_layers PRIVATE Psd)
+target_include_directories(psd_layers PRIVATE src stb)
+target_sources(psd_layers PRIVATE src/image_utils.cpp)
