@@ -343,6 +343,23 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         ggml_backend_free(backend);
         ggml_free(ctx);
         m.ctx_g = nullptr;
+
+        // diagnostic for docs/ggml-upstream-issues.md #4: is the collapse
+        // already present in the latent (pre-decode), or introduced by
+        // decode? Per-row mean|value| of frame 0's latent, WHC4 layout
+        // (W fastest) -- a collapse concentrated at specific rows here
+        // would point at the UNet itself, not the VAE decode.
+        if (!cfg.debug_dir.empty() && getenv("SEETHROUGH_DEBUG_LATENT")) {
+            // planar WHC layout (ggml ne=[ZR,ZR,4,F], W fastest): element
+            // (x,y,c) of frame 0 is at c*ZR*ZR + y*ZR + x
+            for (int y = 0; y < ZR; y++) {
+                double acc = 0;
+                for (int x = 0; x < ZR; x++)
+                    for (int c = 0; c < 4; c++)
+                        acc += fabs(lat[(size_t) c * ZR * ZR + (size_t) y * ZR + x]);
+                printf("[debug] latent row %3d mean|v|=%.5f\n", y, acc / (ZR * 4));
+            }
+        }
     }
 
     // decode each frame through the TransparentVAE chain

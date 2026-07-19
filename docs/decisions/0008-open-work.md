@@ -45,18 +45,18 @@ Policy:
 
 - [ ] **Fix the 1280px collapse** (see MADR 0007 for diagnostics completed
       so far — this single bug also causes the blank-face/missing-ears
-      symptom, not a separate "content-quality" bug): `direct_conv` and now
-      `flash_attn` are both **excluded** — a query-tiled naive-attention
-      substitute (`tests/probe_flash_bigT.cpp`-adjacent work,
-      `Model.tiled_naive_attn`, proven exact via Lean `tiled-*` cases and
-      VRAM-safe at production scale) produces the identical collapse when
-      swapped in for flash_attn. Redirected: the raw pre-crop decode
-      output is already collapsed (rules out `crop_part`/postprocessing),
-      and different semantic tags/frames show the *same* blocky artifact
-      in the same position — points at the decode-stage row-chunk
-      tile-assembly/frame-layout logic (`ops.cpp`'s `conv2d`), not
-      attention or per-tag content. See docs/ggml-upstream-issues.md item
-      4's updated "Status: paused, but narrowed" note.
+      symptom, not a separate "content-quality" bug): `direct_conv` and
+      `flash_attn` are both **excluded** (the latter decisively, via an
+      exact VRAM-safe tiled-naive-attention substitute,
+      `Model.tiled_naive_attn`, that reproduces the identical collapse).
+      Row-chunk tile-boundary logging shows the tiling arithmetic itself
+      is clean at every spatial size in the decode. A pre-decode latent
+      dump shows the latent is statistically normal (no edge collapse) —
+      **the bug is isolated to the VAE decode stage itself**
+      (`vae_decode`/`trans_vae_decode` in `src/vae.cpp`), not the UNet, not
+      attention, not row-chunk tiling arithmetic. See
+      docs/ggml-upstream-issues.md item 4's updated "Status: paused, but
+      substantially narrowed" note for the full chain of exclusions.
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning
 - [ ] Upstream parity: match our SVG's per-tag layers against upstream's

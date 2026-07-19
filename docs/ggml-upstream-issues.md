@@ -158,13 +158,41 @@ This points the search at the VAE decode's row-chunked im2col *assembly*
 (the tile-accumulation/frame-layout logic in `ops.cpp`'s `conv2d`, not the
 underlying `ggml_im2col`/`ggml_mul_mat` kernels, which are still covered by
 the `decode-rowchunk-1280-64` Lean case) as the next suspect, rather than
-any attention knob. Not yet investigated further.
+any attention knob.
 
-Status: paused, but narrowed. `direct_conv` and `flash_attn` are both
-excluded (the latter decisively, via an exact VRAM-safe substitute, not
-just an untested toggle). Root cause is upstream of per-layer cropping, in
-the shared decode/frame-layout stage, evidenced by an identical artifact
-shape across different semantic tags.
+Update: instrumented the row-chunk tile boundaries directly
+(`SEETHROUGH_DEBUG_ROWCHUNK=1`, already-existing printf) for a full 1280px
+decode. Every tile at every spatial size seen (1280, 768, 640, 384, 320,
+160, 96, 80, 48, 40) tiles cleanly: monotonic 160-row (or proportional)
+chunks, no overlap, correct halo handling, accumulator growing by exactly
+one tile's worth each iteration. The row-chunk tiling *arithmetic* is not
+the bug.
+
+Update: re-examined the artifact's actual screen position rather than
+just its shape — it sits at the very top row and right edge of the
+canvas, i.e. exactly where letterbox padding falls for this portrait-
+aspect input, with the interior/body region otherwise blank. Since this
+was already true in the *raw pre-crop* dump, the decode is producing
+genuinely near-empty output in the body region — this isn't a coordinate/
+crop bug, the pixels themselves are missing.
+
+Update: dumped the final latent's per-row mean|value| before decode runs
+(`SEETHROUGH_DEBUG_LATENT=1`) to check whether the collapse is already
+present pre-decode. It is not: every row from 0-156 sits in a tight
+0.46-0.51 band with no edge concentration or dropout — a normal-looking
+latent, no visible spatial collapse. (Rows 157-159 show a mild, expected
+bump/taper — ordinary boundary behavior, nothing like the pixel-space
+collapse.) This rules out the UNet/latent computation as the source: the
+corruption is introduced specifically during VAE decode, not before it.
+
+Status: paused, but substantially narrowed. `direct_conv`, `flash_attn`
+(decisively, via an exact VRAM-safe substitute), the row-chunk tiling
+arithmetic, and the UNet/latent computation are all excluded. The bug is
+isolated to the VAE decode stage (`vae_decode`/`trans_vae_decode` in
+`src/vae.cpp`) specifically — something in its resnet blocks, mid-block
+attention, upsampler, or trans-vae-specific layers produces near-empty
+output at res=1280 despite a normal input latent and correct row-chunk
+tiling. Not yet bisected further within the decode graph itself.
 
 ## Remediation policy
 
