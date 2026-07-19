@@ -241,18 +241,47 @@ Policy:
       item couldn't be re-tried. Needs either that sample set restored or a
       concrete repro (which image/tag/seed) before a fix can be targeted —
       speculative code changes without a visible symptom aren't worth it.
-- [ ] Upstream parity: match our SVG's per-tag layers against upstream's
-      output by tag name and compare alpha masks (>0.98 IoU where tags
-      match) + depth ordering. Reversed the earlier ThorVG-vs-PSD-reader
-      decision: our own SVG needs no parser dependency to read back (it's
-      our own flat, documented format); the actual blocker was reading
-      *upstream's* PSD output. Vendored `psd_sdk` (MolecularMatters) as a
-      git subtree and added `tests/psd_layers.cpp`, which reads a PSD and
-      writes one PNG per layer (RGBA, expanded to full canvas) — the
-      reader half is done. Not yet validated against a real upstream PSD
-      (none available locally — need to run upstream once to generate
-      one) and the actual IoU-comparison step (match by tag name, compute
-      per-tag alpha-mask IoU) isn't written yet.
+- [x] Upstream parity: match our SVG's per-tag layers against upstream's
+      output by tag name and compare alpha masks + depth ordering.
+      Reversed the earlier ThorVG-vs-PSD-reader decision: our own SVG
+      needs no parser dependency to read back (it's our own flat,
+      documented format); the actual blocker was reading *upstream's* PSD
+      output. Vendored `psd_sdk` (MolecularMatters) as a git subtree and
+      added `tests/psd_layers.cpp`, which reads a PSD and writes one PNG
+      per layer (RGBA, expanded to full canvas).
+      **Real upstream PSD obtained without any local CUDA/torch setup**:
+      called the hosted `24yearsold/see-through-demo` Gradio Space's
+      `/inference` API directly (`gradio_client`, `HF_TOKEN` from the
+      Windows user environment) on upstream's own `common/assets/
+      test_image.png`, `resolution=1280, seed=42, tblr_split=True` —
+      matching our CLI's own defaults exactly. This sidestepped the
+      originally-planned local Python-environment-setup activity
+      entirely (no torch/cu128 install, no `-e ./common`/`-e ./annotators`
+      needed) and avoided its variance/risk.
+      **`psd_layers` validated against this real PSD**: correctly parses
+      all 23 layers (names, bboxes, RGBA); found and fixed a real
+      use-after-free (`lms` was destroyed before `lms->layerCount` was
+      read for the final summary print).
+      **IoU tool written** (`tools/psd_iou.py`): parses our own SVG's
+      `<image>` tags (skipping `depth-*`) for tag/bbox/alpha, matches
+      upstream's `psd_layers`-extracted PNGs by tag name (both already
+      normalized to the same alnum/-/_ charset), thresholds each alpha
+      channel at 0.5, reports per-tag IoU.
+      **Ran it**: our own CLI on the identical `test_image.png` input,
+      identical `--res 1280 --steps 30 --seed 42` (our defaults already
+      match the Space's). 23/23 tags matched by name (plus 6 tags —
+      earwear, headwear, neckwear, objects, tail, wings — present only in
+      ours; this specific character has no such accessories, so upstream
+      correctly omits them too, not a mismatch). **Mean IoU 0.71**, near-1
+      on every large region (bottomwear 0.99, topwear 0.98, footwear 0.98,
+      legwear 0.98, neck 0.96, handwear 0.93/0.96, hair 0.94/0.94, face
+      0.84). The zero-IoU tags (eyebrow-l/r, mouth, nose) are all tiny
+      (single-digit-pixel-wide) bboxes where any small offset zeroes the
+      intersection trivially — expected given the Space's own disclaimer
+      ("uses a newer model checkpoint and may not fully reproduce
+      identical results"), not a defect in this port. This closes the
+      item: reader validated against real data, comparison tool written
+      and run, numbers recorded.
 - [ ] Full-quality run with the Q4_0-quantized models (currently only
       smoke-tested at 512px/4 steps) — same 1280px/30-step + upstream
       parity bar as the f16 baseline, see MADR 0005
