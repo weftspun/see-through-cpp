@@ -1,0 +1,51 @@
+#!/bin/sh
+# Enforce braces around every if/else/for/while/do body (see .clang-tidy:
+# readability-braces-around-statements) on lines this commit actually adds.
+# Only checks added lines, not whole files -- the existing codebase has
+# plenty of pre-existing brace-less one-liners; this is a going-forward
+# rule, not a rewrite of history.
+
+files=$(git diff --cached --name-only --diff-filter=ACM -- 'src/*.cpp' 'src/*.h' 'tests/*.cpp')
+[ -z "$files" ] && exit 0
+
+command -v clang-tidy >/dev/null 2>&1 || {
+    echo "pre-commit: clang-tidy not found on PATH, skipping brace-style check" >&2
+    exit 0
+}
+
+db=build-vulkan/compile_commands.json
+[ -f "$db" ] || db=build/compile_commands.json
+[ -f "$db" ] || {
+    echo "pre-commit: no compile_commands.json (build-vulkan/ or build/), skipping brace-style check" >&2
+    exit 0
+}
+builddir=$(dirname "$db")
+
+status=0
+for f in $files; do
+    ranges=$(git diff --cached -U0 -- "$f" | awk '
+        /^@@/ {
+            match($0, /\+[0-9]+(,[0-9]+)?/)
+            s = substr($0, RSTART + 1, RLENGTH - 1)
+            n = split(s, a, ",")
+            start = a[1]
+            cnt = (n > 1 ? a[2] : 1)
+            if (cnt > 0) printf "[%d,%d],", start, start + cnt - 1
+        }')
+    ranges=${ranges%,}
+    [ -z "$ranges" ] && continue
+    # clang-tidy's -line-filter "name" matches by basename, not full path
+    filter="[{\"name\":\"$(basename "$f")\",\"lines\":[$ranges]}]"
+    out=$(clang-tidy -p "$builddir" --quiet "-line-filter=$filter" "$f" 2>&1)
+    if echo "$out" | grep -q "readability-braces-around-statements"; then
+        echo "$out" | grep -B1 "readability-braces-around-statements" >&2
+        status=1
+    fi
+done
+
+if [ "$status" -ne 0 ]; then
+    echo "" >&2
+    echo "pre-commit: add braces around the block(s) above (readability-braces-around-statements)." >&2
+    echo "Bypass with 'git commit --no-verify' if this is a false positive." >&2
+fi
+exit $status

@@ -1,0 +1,12 @@
+---
+# Enforce braces around every if/else/for/while/do body -- catches the
+# classic dangling-else / accidental-scope bugs a brace-less one-liner
+# invites. Everything else stays off; this isn't a general lint pass.
+Checks: >
+  -*,
+  readability-braces-around-statements
+CheckOptions:
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: '0'
+WarningsAsErrors: 'readability-braces-around-statements'
+HeaderFilterRegex: '^src/.*'

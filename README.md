@@ -49,6 +49,21 @@ the fallback). Run Vulkan binaries with `build-vulkan/bin` on PATH (shared
 ggml). `--png-dir <dir>` additionally exports per-layer RGBA + depth PNGs in
 z order with a `layers.json` manifest; `--debug-dir <dir>` dumps stage stats.
 
+## Development
+
+Braces are required around every `if`/`else`/`for`/`while`/`do` body
+(`.clang-tidy`: `readability-braces-around-statements`). Enforced on new
+lines only via a pre-commit hook — install it once per clone:
+
+```sh
+cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+Needs `clang-tidy` on PATH and a `compile_commands.json` in `build-vulkan/`
+or `build/` (CMake generates one by default); the hook no-ops with a
+warning if either is missing, rather than blocking commits.
+
 ## Port notes (documented divergences)
 
 - Upstream `TransparentVAEDecoder.estimate_augmented` has a `break` after the
