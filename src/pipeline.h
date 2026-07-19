@@ -48,3 +48,13 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
 
 // LaMa inpaint callback backed by lama.gguf (loads weights on first use)
 InpaintFn make_lama_inpaint(const PipelineConfig & cfg);
+
+// full pipeline: input image -> depth-ordered per-tag layers -> SVG document
+// (+ one PNG per layer, z-ordered back-to-front, tag as the id). Shared by
+// the CLI (see_through.cpp) and the C ABI (see_through_capi.h) so both stay
+// in sync with exactly one orchestration path.
+struct SeeThroughResult {
+    std::string svg;
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> png_layers;
+};
+bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThroughResult & result);
