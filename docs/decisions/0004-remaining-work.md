@@ -8,7 +8,7 @@
 M1–M13 of the port plan are implemented; every component has a numeric gate
 against the upstream PyTorch pipeline (see README status table). This record
 lists what was completed during the close-out; everything still open lives in
-MADR 0005.
+MADR 0006.
 
 ## Completed
 
@@ -66,9 +66,9 @@ MADR 0005.
       Requantized layerdiff-unet/marigold-unet/layerdiff-te2/marigold-te:
       12.65GB -> 4.86GB (61.6%); a 512px/4-step smoke run with the
       quantized weights produced coherent layers (clear hair strands,
-      clothing) — see MADR 0006.
+      clothing) — see MADR 0005.
 
 ## Consequences
 
 Open items — including final validation on the upstream sample — are tracked
-in MADR 0005.
+in MADR 0006.

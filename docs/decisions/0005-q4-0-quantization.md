@@ -1,4 +1,4 @@
-# 6. Q4_0 quantization for nn.Linear weights
+# 5. Q4_0 quantization for nn.Linear weights
 
 Status: accepted (2026-07-18)
 
@@ -80,7 +80,7 @@ isolated FFI probe.
 ## Consequences
 
 Not yet run at full 1280px/30-step scale or checked against upstream IoU
-parity — tracked in MADR 0005. If a specific shape proves too lossy at full
+parity — tracked in MADR 0006. If a specific shape proves too lossy at full
 scale despite passing the design search (design tolerance was chosen from a
 synthetic random-data measurement, not derived from the real weight
 distributions), the fix is Q4_K for that tensor alone, not abandoning
