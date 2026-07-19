@@ -64,7 +64,7 @@ if (WIN32)
 endif()
 
 
-foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_vae_encode_160 test_unet_blocks test_unet_forward test_unet_forward_160 test_scheduler test_layerdiff_e2e test_layerdiff_e2e_160 test_ddim test_marigold_e2e test_lama graph_mem)
+foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_vae_encode_160 test_vae_encode_tiled test_vae_decode_tiled test_unet_blocks test_unet_forward test_unet_forward_160 test_scheduler test_layerdiff_e2e test_layerdiff_e2e_160 test_ddim test_marigold_e2e test_lama graph_mem)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE seethrough)
 endforeach()

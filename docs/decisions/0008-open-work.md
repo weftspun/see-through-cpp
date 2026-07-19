@@ -43,7 +43,7 @@ Policy:
 
 ### Validation
 
-- [ ] **Fix the 1280px collapse** (see MADR 0007 for diagnostics completed
+- [x] **Fix the 1280px collapse** (see MADR 0007 for diagnostics completed
       so far — this single bug also causes the blank-face/missing-ears
       symptom, not a separate "content-quality" bug): `direct_conv` and
       `flash_attn` (via `attn_tokens`) are **excluded** for the main
@@ -162,12 +162,48 @@ Policy:
       compounding — root cause of that specific divergence still unknown.
       Abandoned CPU-vs-GPU comparison as a next diagnostic step per
       explicit direction to stay off CPU entirely, even for debugging.
-      **This item remains open.** The confirmed root cause is real and
-      well understood; the applied default GPU mitigation
-      (`ggml_mul_mat_set_prec`) is a genuine but incomplete improvement.
-      See docs/ggml-upstream-issues.md item 4 for full detail and the
-      concrete next debugging step (per-chunk taps inside
-      `mul_mat_kahan`'s own loop, live in the real model).
+      **Actual root cause and fix, found by questioning the premise**
+      (prompted by "check upstream see-through, I'd expect tiling"): this
+      VAE's own trained config is `sample_size=512`/`tile_sample_min_size=
+      512`. Every comparison in this whole investigation — ours and every
+      upstream reference generated for it — ran the encoder and decoder at
+      res=1280, **2.5x beyond that trained scale, fully untiled**. That is
+      what pushes `mid_block.resnets.1` into the extreme, near-cancelling
+      activation regime in the first place (confirmed present in
+      upstream's own untiled reference too — not a ggml-only artifact),
+      which is then what the GPU-vs-CPU rounding difference amplifies into
+      a visible defect. diffusers ships `AutoencoderKL.enable_tiling()`
+      exactly for this case; neither upstream's real pipeline nor any
+      reference script built during this investigation ever called it.
+      **Fix**: implemented `vae_encode_tiled`/`vae_decode_tiled` in
+      `vae.cpp`, matching diffusers' `tiled_encode`/`tiled_decode`
+      algorithms exactly (512px tiles, 0.25 overlap factor, linear
+      blend_v/blend_h, crop-to-core, concat) — fully composed from
+      existing ggml ops, no custom kernel. Wired into both page/depth-cond
+      encode call sites and `trans_vae_decode`; passes through unchanged
+      to the plain (already-validated) path when the input already fits
+      one tile, so no regression at production's normal <=512px sizes
+      (confirmed: `test_trans_vae_full`/`test_vae_encode` still pass).
+      **Verified**: with tiled encode alone, the generated latent goes
+      from completely flat/featureless to showing real garment structure
+      for the first time all session. **Also separately discovered**: the
+      already-fixed, already-confirmed `attn_block` buffer-overflow fix
+      for `unet1024` (`SEETHROUGH_TILED_ATTN`, MADR 0007) was never
+      actually enabled by default in production — it required an opt-in
+      env var that no pipeline run ever set. Made it the default
+      (`SEETHROUGH_NO_TILED_ATTN` now opts out). **With tiled encode +
+      tiled decode + default-on tiled attention together, a full
+      1280px/8-step production run (plain CLI, no special flags) produces
+      29 correctly-cropped, non-blank layers with coherent visual content**
+      (garment folds, face shading, hair — verified by eye, not just
+      alpha stats). This closes the item: the 1280px collapse, the
+      blank-face/missing-ears symptom, and the earlier catastrophic
+      `c_concat` divergence were all one root cause. `ggml_mul_mat_set_prec`
+      stays in place too (a real, independently-useful improvement) but
+      tiling was the fix that actually mattered.
+      **Not yet done**: full 30-step production validation (only 8 was
+      re-tested after this fix; production's real step count is 30) and
+      Q4_0 quantized-model validation at this shape — tracked below.
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,
       not currently reproducible**: audited every L/R-split tag

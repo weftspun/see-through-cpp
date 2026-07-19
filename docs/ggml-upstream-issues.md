@@ -547,18 +547,60 @@ per-conv debug taps and dump capability are left in place (harmless when
 just per-conv) while it's live against the real `im2col` tensor is the
 next step, if this is picked up again.
 
-**Status**: the confirmed root cause (Vulkan `mul_mat` catastrophic
-cancellation in the VAE encoder's `mid_block.resnets.1`) is real and its
-mechanism is well understood; the GPU-only mitigation applied
-(`ggml_mul_mat_set_prec`, active by default) is a genuine, verified
-improvement but does not fully close the gap for the actual production
-input, and the full pipeline still produces blank output at 1280px/8
-steps. The Kahan-chunked follow-up meant to close that gap further is
-built and instrumented but disabled — it has a real, reproducible,
-GPU-only defect of its own that neither extensive synthetic probing nor
-per-conv real-model bisection has yet isolated. Untested whether a
-higher step count (production's real 30) changes the blank-output
-symptom. This item remains open.
+Update (**actual root cause and fix**): the `mul_mat` catastrophic-
+cancellation defect above is real, but chasing it further (Kahan
+chunking) was chasing a symptom, not the disease. The question "check
+upstream see-through, I'd expect tiling" reframed the whole
+investigation: this VAE's own trained config is `sample_size=512` /
+`tile_sample_min_size=512`. Every single comparison run in this entire
+investigation — our ggml output *and every upstream Python reference
+generated to check it against* — encoded/decoded at res=1280, **2.5x
+past that trained resolution, completely untiled**. That is what pushes
+`mid_block.resnets.1` into the extreme, near-cancelling activation
+regime that then makes GPU-vs-CPU rounding differences visible as a
+defect — confirmed present in upstream's *own* untiled reference too,
+not a ggml-specific artifact. diffusers ships `AutoencoderKL.
+enable_tiling()` for exactly this scenario; neither the real upstream
+pipeline nor any reference script this investigation built ever called
+it, so this was never actually a fair test at production scale.
+
+**Fix**: implemented `vae_encode_tiled`/`vae_decode_tiled` (`vae.cpp`),
+matching diffusers' `AutoencoderKL.tiled_encode`/`tiled_decode`
+algorithms exactly (512px tiles, 0.25 overlap factor, linear
+`blend_v`/`blend_h`, crop-to-core, concat) — composed entirely from
+existing validated ggml ops (view/cont/scale/add/sub/concat via
+`ggml_arange` for the blend ramp), no custom kernel. Passes through
+unchanged to the plain, already-validated path when the input already
+fits in one tile, so normal <=512px production runs are unaffected
+(`test_trans_vae_full`, `test_vae_encode` both still pass identically).
+**Verified against a real upstream reference generated WITH
+`vae.enable_tiling()`**: `vae_encode_tiled` alone changes the generated
+latent from completely flat/featureless to showing real garment
+structure for the first time in this entire investigation.
+
+Separately discovered while chasing the remaining blank decode output:
+the already-fixed, already-confirmed `attn_block` buffer-overflow fix
+for `unet1024` (item 4's original finding, `SEETHROUGH_TILED_ATTN`) had
+never actually been enabled in any production run this whole session —
+it required an opt-in env var nothing ever set. Made it the default
+(`m.tiled_naive_attn = !getenv("SEETHROUGH_NO_TILED_ATTN")`).
+
+**With tiled encode + tiled decode + default-on tiled attention
+together, a plain `see-through` CLI run at 1280px/8 steps — no special
+env vars — produces 29 correctly-cropped, non-blank layers with
+coherent visual content** (garment folds, face shading, hair, verified
+visually). This closes the 1280px collapse: the blank-face/missing-ears
+symptom and the catastrophic `c_concat` divergence were both downstream
+of the same root cause (running a 512-trained VAE 2.5x past its scale,
+untiled). `ggml_mul_mat_set_prec` and the disabled Kahan-chunking
+attempt both stay in the source (the former active, a real if smaller
+independent improvement; the latter `#if`-available for anyone chasing
+that specific residual defect later) but tiling was the fix that
+actually mattered.
+
+Not yet done: full 30-step production validation (only 8 steps —
+the count that originally triggered the collapse — was re-tested after
+this fix) and Q4_0 quantized-model validation at this shape.
 
 ## Remediation policy
 

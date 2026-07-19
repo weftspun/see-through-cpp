@@ -87,15 +87,20 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
             m.conv_row_chunk = !getenv("SEETHROUGH_NO_ROWCHUNK_UNET");
             m.conv_row_chunk_min_hw = 40 * 40;
         }
-        // A/B diagnostic for the 1280px collapse (docs/ggml-upstream-
-        // issues.md #4): query-tiled naive attention instead of the plain
-        // naive path, VRAM-bounded so it can actually run at production
-        // token counts (unlike a plain flash_attn=false toggle, which
-        // OOMs). Applies to both attn_tokens (diffusion UNet, ahead of
-        // flash_attn) and attn_block (VAE mid_block/unet1024 spatial
-        // self-attention, always-naive otherwise, unguarded at any T) --
-        // not gated on `unet` since attn_block matters for the VAE model.
-        m.tiled_naive_attn = getenv("SEETHROUGH_TILED_ATTN") != nullptr;
+        // Query-tiled naive attention, VRAM-bounded so it can actually run
+        // at production token counts (unlike a plain flash_attn=false
+        // toggle, which OOMs). Applies to both attn_tokens (diffusion UNet,
+        // ahead of flash_attn) and attn_block (VAE mid_block/unet1024
+        // spatial self-attention, always-naive otherwise, unguarded at any
+        // T) -- not gated on `unet` since attn_block matters for the VAE
+        // model. Part of the confirmed 1280px-collapse fix (docs/ggml-
+        // upstream-issues.md #4): unet1024's first spatial self-attention
+        // (head_dim=8, 32 heads, T=6400) overflows Vulkan's ~4.295GB
+        // maxStorageBufferRange in the plain naive path, corrupting output
+        // silently -- confirmed exact against independent CPU ground truth
+        // when tiled. On by default now; SEETHROUGH_NO_TILED_ATTN reverts
+        // to the plain (defective, at this shape) path for A/B testing.
+        m.tiled_naive_attn = !getenv("SEETHROUGH_NO_TILED_ATTN");
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
     }
     return m.load(path.c_str());
@@ -244,11 +249,20 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         }
         ggml_tensor * x = nullptr;
         std::vector<std::vector<float>> outs;
-        bool ok = run_graph_dev(cfg, mv, 4096,
+        // vae_encode_tiled: this VAE's own trained config is sample_size=512;
+        // encoding untiled far beyond that (e.g. 1280) pushes some resnets
+        // into extreme near-cancelling activations that amplify ordinary
+        // GPU float rounding into a visible defect (docs/ggml-upstream-
+        // issues.md #4). Tiling matches diffusers' own enable_tiling()
+        // behavior and keeps every tile within the trained scale; passes
+        // through to plain vae_encode when RES already fits one tile.
+        // Needs a much larger node budget: 16 tiles at res=1280, each
+        // running the full encoder graph.
+        bool ok = run_graph_dev(cfg, mv, 98304,
             [&]() {
                 x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
                 ggml_set_input(x);
-                return std::vector<ggml_tensor *>{ ggml_scale(mv.ctx_g, vae_encode(mv, x), SCALE) };
+                return std::vector<ggml_tensor *>{ ggml_scale(mv.ctx_g, vae_encode_tiled(mv, x), SCALE) };
             },
             [&]() { ggml_backend_tensor_set(x, feed.data(), 0, feed.size() * 4); },
             outs);
@@ -448,7 +462,9 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             // collapse first appears -- frame 0 only, to keep output sane
             mv.debug_capture = f == 5 && getenv("SEETHROUGH_DEBUG_DECODE_STAGES") != nullptr;
             mv.debug_taps.clear();
-            bool ok = run_graph_dev(cfg, mv, 32768,
+            // vae_decode_tiled multiplies node count ~16x at res=1280 (16
+            // latent tiles, each running the full decoder) -- generous budget.
+            bool ok = run_graph_dev(cfg, mv, 131072,
                 [&]() {
                     zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
@@ -553,11 +569,14 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
             }
             ggml_tensor * x = nullptr;
             std::vector<std::vector<float>> outs;
-            bool ok = run_graph_dev(cfg, mv, 4096,
+            // vae_encode_tiled: see the layerdiff page-latent comment above;
+            // passes through to plain vae_encode when RES fits in one tile
+            // (depth_res is usually <=512, but stay consistent/safe if not).
+            bool ok = run_graph_dev(cfg, mv, 98304,
                 [&]() {
                     x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
                     ggml_set_input(x);
-                    return std::vector<ggml_tensor *>{ ggml_scale(mv.ctx_g, vae_encode(mv, x), SCALE) };
+                    return std::vector<ggml_tensor *>{ ggml_scale(mv.ctx_g, vae_encode_tiled(mv, x), SCALE) };
                 },
                 [&]() { ggml_backend_tensor_set(x, feed.data(), 0, feed.size() * 4); },
                 outs);
@@ -680,7 +699,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
                 [&]() {
                     zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
-                    return std::vector<ggml_tensor *>{ vae_decode(mv, zt) };
+                    return std::vector<ggml_tensor *>{ vae_decode_tiled(mv, zt) };
                 },
                 [&]() { ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4); },
                 outs);
