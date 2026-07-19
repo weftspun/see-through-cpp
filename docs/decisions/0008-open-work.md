@@ -201,9 +201,14 @@ Policy:
       `c_concat` divergence were all one root cause. `ggml_mul_mat_set_prec`
       stays in place too (a real, independently-useful improvement) but
       tiling was the fix that actually mattered.
-      **Not yet done**: full 30-step production validation (only 8 was
-      re-tested after this fix; production's real step count is 30) and
-      Q4_0 quantized-model validation at this shape — tracked below.
+      **Full 30-step production validation done**: reran the plain CLI
+      (`--res 1280 --steps 30`, no special flags) at production's real
+      step count. Same result as the 8-step check — 29 correctly-cropped,
+      non-blank layers, visually confirmed coherent (garment folds, face
+      shading, hair) at full quality, no regression at the higher step
+      count. This item is fully closed.
+      **Not yet done**: Q4_0 quantized-model validation at this shape —
+      tracked as its own checklist item below.
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,
       not currently reproducible**: audited every L/R-split tag
