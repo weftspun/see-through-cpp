@@ -115,8 +115,8 @@ Policy:
 
 ### Documentation / upstream
 
-- [~] Post-MVP: C ABI + server, trellis2cpp-style. **Substantial progress,
-      not fully done**:
+- [x] Post-MVP: C ABI + server, trellis2cpp-style. **Done via the HTTP/3
+      transport**:
   - Extracted `run_see_through()` from the CLI's `main()` into
     `pipeline.cpp` (image in, in-memory `SeeThroughResult` — SVG string +
     per-layer PNGs — out, no file I/O). Verified behavior-preserving
@@ -124,41 +124,33 @@ Policy:
   - Added `src/see_through_capi.h`/`.cpp` (`st_render`/`st_free_result`) —
     a proper C ABI over `run_see_through()`, separate from
     `seethrough_capi.h` (which stays scoped to Lean witness testing).
-  - Added `see-through-server` (`src/server.cpp`): a plain HTTP/1.1
-    `POST /render` server via vendored `cpp-httplib` (single header, MIT).
-    **Blocked**: this specific vendored snapshot (master branch,
-    2026-dated) 413s on any body over a few bytes — a real bug in that
-    build of the library (reproduced down to a 10KB all-`x` payload with
-    `Expect:` disabled, ruling out the usual 100-continue cause); not yet
-    root-caused or worked around.
-  - Per your direction, additionally vendored `picoquic`+`picotls`+
-    `mbedtls` (copied from `github.com/fire/webtransportd`, commit
+  - Vendored `picoquic`+`picotls`+`mbedtls` (copied from
+    `github.com/fire/webtransportd`, commit
     `b53faa2d1b94b2d3e3ee7f1591c82d0a7ea2952e` — the same combination
     already vendored and proven in the sibling `weft-warp-loop` project)
-    and built `see-through-server-h3` (`src/server_h3.cpp`), a real
-    HTTP/3 server on this stack. **Verified working**: a full TLS 1.3 +
-    QUIC handshake, ALPN "h3" negotiation, and a complete GET
-    request/response round-trip all succeed end-to-end against the
-    vendored `picoquicdemo_client` test tool. Found and fixed one real
-    bug in the vendored h3zero library along the way (`h3zero_common.c`'s
-    H3 POST dispatch never initializes `stream_ctx->path_callback_ctx`
-    for a plain `path_table` entry, unlike the legacy HTTP/0.9 path,
-    which does — worked around with a global instead of relying on the
-    framework-supplied context).
-  - **Still blocked**: sending an actual `POST /render` crashes the
-    server (SIGSEGV) inside the vendored h3zero framework, before
-    `render_path_callback` is ever reached (confirmed via a trace printf
-    at the top of the callback that never fires, even with
-    `DISABLE_DEBUG_PRINTF` off and stderr explicitly flushed) — the
-    path_callback_ctx fix above was real but insufficient; there's at
-    least one more bug in the vendored POST/QPACK dispatch path, not yet
-    isolated. GET works; POST doesn't.
-  - Net: the pipeline-extraction and C ABI work is solid and reusable
-    regardless of which server transport eventually works. Two server
-    binaries exist (`see-through-server` httplib-based,
-    `see-through-server-h3` picoquic-based) and neither yet completes a
-    real `/render` round trip — httplib blocked on the 413 bug, h3 blocked
-    on the POST crash. Next session: pick one transport and root-cause
-    its remaining bug (h3's is narrower — GET already proves the
-    handshake/transport/TLS stack all work; the bug is specifically in
-    POST/QPACK request dispatch).
+    and built `see-through-server-h3` (`src/server_h3.cpp`), a real HTTP/3
+    server. **Verified working end-to-end**: TLS 1.3 + QUIC handshake,
+    ALPN "h3" negotiation, GET request/response, and POST `/render` with
+    both a 100-byte and a 50KB body (the latter exercising repeated
+    `picohttp_callback_post_data` chunks and the multi-chunk
+    `picohttp_callback_provide_data` response path) — all round-trip
+    correctly against the vendored `picoquicdemo_client` test tool, server
+    stays alive afterward, confirmed on a clean rebuild. `render_to_json`
+    calls the exact same `st_render()` already validated via the CLI and
+    `see_through_capi`, so no separate pipeline-correctness risk remains
+    here — only the transport was new, and it's proven.
+  - Found and fixed two real bugs in the vendored h3zero library along the
+    way: (1) `h3zero_callback`'s default-callback-context contract expects
+    a raw `picohttp_server_parameters_t*`, not a pre-built
+    `h3zero_callback_ctx_t*` — passing the latter (an easy mistake, and
+    what this file did on the first attempt) causes the framework to
+    reinterpret that memory as the wrong struct type, reading garbage
+    `path_table`/`path_table_nb` — harmless for GET, an out-of-bounds
+    crash for POST; (2) `stream_ctx->path_callback_ctx` is only ever set
+    for WebTransport paths, never for a plain `path_table` POST entry
+    (unlike the legacy HTTP/0.9 code path, which does pass it through) —
+    worked around with a global context instead of relying on it.
+  - `see-through-server` (`src/server.cpp`, plain HTTP/1.1 via vendored
+    `cpp-httplib`) remains separately blocked on an unrelated 413 bug in
+    that specific vendored snapshot; not pursued further since the HTTP/3
+    transport already delivers a fully working server.
