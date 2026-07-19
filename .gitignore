@@ -15,3 +15,4 @@ assets/
 gen_reference/*.bin
 /*.log
 verify/.lake/
+scratch_run*/
