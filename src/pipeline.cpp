@@ -1,6 +1,7 @@
 #include "pipeline.h"
 
 #include "clip.h"
+#include "image_utils.h"
 #include "lama.h"
 #include "scheduler.h"
 #include "unet_frame.h"
@@ -362,6 +363,27 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                         acc += fabs(lat[(size_t) c * ZR * ZR + (size_t) y * ZR + x]);
                 printf("[debug] latent row %3d mean|v|=%.5f\n", y, acc / (ZR * 4));
             }
+            // channel-collapsed grayscale visualization of frame 5's latent
+            // (topwear): does the LATENT itself already lack spatial
+            // coherence, or does that only appear once decode runs? Per-row
+            // stats above can't tell scrambled noise from a real shape.
+            const int fvis = 5;
+            std::vector<double> mag((size_t) ZR * ZR, 0.0);
+            for (int c = 0; c < 4; c++) {
+                for (int y = 0; y < ZR; y++) {
+                    for (int x = 0; x < ZR; x++) {
+                        mag[(size_t) y * ZR + x] += fabs(
+                            lat[(size_t) fvis * DZ + (size_t) c * ZR * ZR + (size_t) y * ZR + x]);
+                    }
+                }
+            }
+            double vmax = 1e-9;
+            for (double v : mag) { vmax = std::max(vmax, v); }
+            Image vis;
+            vis.w = vis.h = ZR; vis.c = 1;
+            vis.data.resize(mag.size());
+            for (size_t i = 0; i < mag.size(); i++) { vis.data[i] = (float) (mag[i] / vmax); }
+            save_image(cfg.debug_dir + "/latent_frame5.png", vis);
         }
     }
 
@@ -390,7 +412,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                     ggml_set_input(zt);
                     ggml_tensor * out = trans_vae_decode(mv, zt);
                     std::vector<ggml_tensor *> outs_t = { out };
-                    for (auto & kv : mv.debug_taps) { outs_t.push_back(kv.second); }
+                    for (auto & kv : mv.debug_taps) { outs_t.push_back(kv.t); }
                     return outs_t;
                 },
                 [&]() { ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4); },
@@ -399,12 +421,38 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             if (mv.debug_capture) {
                 for (size_t t = 0; t < mv.debug_taps.size(); t++) {
                     const std::vector<float> & v = outs[t + 1];
+                    const Model::DebugTap & dt = mv.debug_taps[t];
                     double acc = 0, acc2 = 0, amax = 0;
                     for (float x : v) { acc += x; acc2 += (double) x * x; amax = std::max(amax, (double) fabs(x)); }
                     double mu = v.empty() ? 0 : acc / v.size();
                     double sd = v.empty() ? 0 : sqrt(std::max(0.0, acc2 / v.size() - mu * mu));
                     printf("[debug] decode stage %-20s n=%8zu mean=%.5f std=%.5f max|v|=%.5f\n",
-                           mv.debug_taps[t].first.c_str(), v.size(), mu, sd, amax);
+                           dt.name.c_str(), v.size(), mu, sd, amax);
+                    // per-pixel channel-collapsed grayscale visualization: is
+                    // the spatial content coherent, or scrambled/collapsed
+                    // even when aggregate stats look sane? (planar WHCN --
+                    // W fastest, then H, then C, then N; visualize N=0 only)
+                    if (!cfg.debug_dir.empty() && !v.empty()) {
+                        const int64_t W = dt.ne[0], H = dt.ne[1], C = dt.ne[2];
+                        if (W > 1 && H > 1 && (size_t) (W * H * C) <= v.size()) {
+                            std::vector<double> mag((size_t) W * H, 0.0);
+                            for (int64_t c = 0; c < C; c++) {
+                                for (int64_t y = 0; y < H; y++) {
+                                    for (int64_t x = 0; x < W; x++) {
+                                        mag[(size_t) y * W + x] +=
+                                            fabs(v[(size_t) c * W * H + (size_t) y * W + x]);
+                                    }
+                                }
+                            }
+                            double vmax = 1e-9;
+                            for (double m : mag) { vmax = std::max(vmax, m); }
+                            Image vis;
+                            vis.w = (int) W; vis.h = (int) H; vis.c = 1;
+                            vis.data.resize(mag.size());
+                            for (size_t i = 0; i < mag.size(); i++) { vis.data[i] = (float) (mag[i] / vmax); }
+                            save_image(cfg.debug_dir + "/stage_" + dt.name + ".png", vis);
+                        }
+                    }
                 }
             }
             // planar RGBA -> interleaved RGBA

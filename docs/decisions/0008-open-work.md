@@ -46,27 +46,32 @@ Policy:
 - [ ] **Fix the 1280px collapse** (see MADR 0007 for diagnostics completed
       so far — this single bug also causes the blank-face/missing-ears
       symptom, not a separate "content-quality" bug): `direct_conv` and
-      `flash_attn` (via `attn_tokens`) are **excluded**. Per-stage
-      instrumentation (`SEETHROUGH_DEBUG_DECODE_STAGES=1`) pinned a real,
-      **confirmed** bug: `unet1024`'s first spatial self-attention call
-      (`down_blocks.4.attentions.0`, `attn_block` in `ops.cpp`) explodes
-      from normal values to ~50000 in one step. Root cause: at this
-      shape (T=6400, head_dim=8, 32 heads), the naive `(Tk,Tq,H,N)`
-      intermediate is 5.24GB — over Vulkan's ~4.295GB
-      `maxStorageBufferRange` single-allocation limit, the same boundary
-      already implicated elsewhere in this doc. Reproduced with pure
-      synthetic weights (not real-checkpoint-specific) and verified
-      against independent CPU ground truth: GPU-naive is 295x off, the new
-      tiled fix (`Model.tiled_naive_attn`, `SEETHROUGH_TILED_ATTN=1`) is
-      1.5% off (normal float tolerance) — a real, confirmed, and fixed
-      ggml/Vulkan kernel defect. **However**, the full 1280px CLI still
-      produces the same visually-collapsed output even with this fix
-      active, so it is not the sole cause — either a second instance of
-      the same buffer-overflow class exists elsewhere in the graph, or a
-      separate issue coexists at this resolution. See
-      docs/ggml-upstream-issues.md item 4's latest status note; next step
-      is inspecting per-stage *images* (not just aggregate stats) with the
-      fix active, starting from `down4.attn0` itself.
+      `flash_attn` (via `attn_tokens`) are **excluded** for the main
+      diffusion UNet. Along the way, found and fixed a real, separate,
+      **confirmed** ggml/Vulkan kernel defect: `unet1024`'s first spatial
+      self-attention call (`attn_block` in `ops.cpp`, `head_dim=8`, 32
+      heads, T=6400) allocates a 5.24GB naive-attention intermediate — over
+      Vulkan's ~4.295GB `maxStorageBufferRange` — causing silent
+      corruption. Reproduced with synthetic weights and verified against
+      independent CPU ground truth (GPU-naive 295x off, the new tiled fix
+      1.5% off — normal float tolerance). Kept as opt-in
+      (`SEETHROUGH_TILED_ATTN`).
+      **However**, this was chasing the wrong stage for the actual visual
+      collapse: adding grayscale visualizations to the per-stage taps
+      showed `vae_decode`/`unet1024`'s output is flat/featureless at
+      res=1280 even with the attn_block fix active, and — critically —
+      dumping the raw **latent itself** (before decode runs at all) shows
+      it is *already* completely flat at res=1280, while the identical
+      frame's latent at res=512 clearly shows the real shape. **The
+      collapse is confirmed to originate in the main diffusion UNet's
+      forward pass** (`unet_frame_forward`, `unet_frame.cpp`), not
+      `vae_decode`/`unet1024` at all — the per-row latent stats check
+      earlier in this investigation missed this because a flat field and a
+      real image can have similar row-wise averages. Next step: apply the
+      same per-stage tap + grayscale-visualization technique to
+      `unet_frame_forward`'s resnets/attention/cross-frame blocks to
+      bisect where inside the main UNet the signal goes flat. See
+      docs/ggml-upstream-issues.md item 4's latest status note.
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,
       not currently reproducible**: audited every L/R-split tag

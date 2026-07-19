@@ -49,12 +49,15 @@ struct Model {
                                   // (but batched) latent-space convs
 
     // diagnostic stage taps (docs/ggml-upstream-issues.md #4): when set,
-    // vae_decode/unet1024 push_back a (name, tensor) pair after each major
-    // stage and mark it GGML_TENSOR_FLAG_OUTPUT so gallocr preserves its
-    // buffer through to the end of the graph; the caller reads them all
-    // back after compute to bisect where a defect first appears
+    // vae_decode/unet1024 push_back a tap after each major stage and mark
+    // the tensor GGML_TENSOR_FLAG_OUTPUT so gallocr preserves its buffer
+    // through to the end of the graph; the caller reads them all back
+    // after compute (shape captured at tap time, not read-back time --
+    // ctx_g and its tensors are freed by then) to bisect where a defect
+    // first appears
+    struct DebugTap { std::string name; int64_t ne[4]; ggml_tensor * t; };
     bool debug_capture = false;
-    std::vector<std::pair<std::string, ggml_tensor *>> debug_taps;
+    std::vector<DebugTap> debug_taps;
 
     Model() = default;
     Model(const Model &) = delete;

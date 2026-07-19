@@ -5,7 +5,7 @@
 static void tap(Model & m, const std::string & name, ggml_tensor * t) {
     if (!m.debug_capture) { return; }
     ggml_set_output(t);
-    m.debug_taps.emplace_back(name, t);
+    m.debug_taps.push_back({ name, { t->ne[0], t->ne[1], t->ne[2], t->ne[3] }, t });
 }
 
 ggml_tensor * vae_encode(Model & m, ggml_tensor * x) {

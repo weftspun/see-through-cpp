@@ -274,16 +274,44 @@ exists elsewhere in the graph (not yet found), or the visual corruption is
 a separate, still-open issue that happens to coexist with this one at the
 same resolution.
 
-Status: one confirmed and fixed root cause (the >4.295GB `attn_block`
-buffer overflow at `head_dim=8` reduction), kept as an opt-in
-(`SEETHROUGH_TILED_ATTN`) pending a decision on defaulting it on now that
-it's verified correct; the *visible* pipeline output at res=1280 is still
-wrong even with the fix applied, so the investigation continues. Next
-step: re-run the same per-stage tapping with tiling on and inspect
-per-stage output *images* (not just aggregate mean/std/max stats, which
-can look sane while the spatial content is still scrambled), starting
-from `down4.attn0` itself, to check whether the tiled computation is
-merely magnitude-correct but still spatially wrong.
+Update: extended the per-stage taps to also save a channel-collapsed
+grayscale visualization per stage (`stage_<name>.png` in `--debug-dir`),
+since aggregate mean/std/max can look "sane" while the spatial content is
+still wrong. At res=512 (known-good), `vae.conv_in`, `vae.mid.attn`, and
+`vae.conv_out` all show clear, coherent image structure (eye/collar
+highlights matching the actual garment). At res=1280 — even with the
+`attn_block` tiling fix active — every one of those same taps is
+completely flat, textureless gray. Chased this back one step further:
+dumped the raw *latent* itself (the diffusion UNet's output, before decode
+ever runs) as the same kind of visualization (`latent_frame5.png`). **At
+res=1280 the latent itself is already completely flat**; at res=512, the
+identical frame's latent clearly shows the same recognizable shape.
+Per-row mean/std stats (this doc's earlier "latent is statistically
+normal" update) cannot distinguish a real image from spatially-uniform
+noise — that check missed this because a flat field and a real image can
+have similar row-wise averages.
+
+This is a significant correction to this investigation's direction: the
+collapse is **not** introduced by `vae_decode`/`unet1024` at all — it's
+already fully present in the diffusion UNet's own output. All of this
+doc's `attn_block`/decode-stage work above is real (a genuine, confirmed,
+fixed ggml/Vulkan kernel defect, kept for that reason) but was chasing a
+symptom in the wrong stage for *this* particular visual collapse. The
+actual cause is somewhere in the main diffusion UNet's forward pass
+(`unet_frame_forward` in `unet_frame.cpp`) at res=1280 (ZR=160 latent) —
+the same UNet whose `direct_conv`/`flash_attn`/`tiled_naive_attn` knobs
+were already individually excluded earlier in this doc. Not yet bisected
+stage-by-stage internally the way `vae_decode`/`unet1024` just were;
+that's the logical next step (same per-stage tap + grayscale-visualization
+technique, applied to `unet_frame_forward`'s resnets/attention/cross-frame
+blocks).
+
+Status: one confirmed and fixed root cause **for a different, real bug**
+(the >4.295GB `attn_block` buffer overflow at `head_dim=8` reduction in
+`unet1024`), kept as an opt-in (`SEETHROUGH_TILED_ATTN`). The 1280px
+visual collapse itself is now known to originate in the main diffusion
+UNet, not the VAE decode chain — redirecting the search there is the next
+step.
 
 ## Remediation policy
 
