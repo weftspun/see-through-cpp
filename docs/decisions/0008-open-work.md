@@ -229,7 +229,7 @@ Policy:
       shows both arms rendering as smooth, continuous limbs shoulder-to-
       fingertip (seam gone) and coherent face/ear content present in their
       individual layer PNGs (skin/blush detail, fur/feather texture).
-- [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
+- [ ] **Blocked on input** — Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,
       not currently reproducible**: audited every L/R-split tag
       (handwear, ears, eyewhite, eyebrow, eyelash, irides) across a fresh
@@ -268,6 +268,13 @@ Policy:
       actionable repro found across three different characters/poses at
       production settings; this item stays open pending either a restored
       upstream sample set or a user-reported concrete case.
+      **Confirmed blocked (2026-07-19)**: no test case is available and
+      none of this session's own blind search (3 characters, both cheap
+      and production settings) turned up an actionable repro. Stopping
+      further speculative search here — the remaining productive path is
+      external (a restored `assets/upstream_samples/` set or a concrete
+      user report), not more guessing. Revisit if either becomes
+      available; no further time should be spent on this item until then.
 - [x] Upstream parity: match our SVG's per-tag layers against upstream's
       output by tag name and compare alpha masks + depth ordering.
       Reversed the earlier ThorVG-vs-PSD-reader decision: our own SVG
