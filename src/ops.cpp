@@ -152,6 +152,15 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
                                                  full->nb[1], full->nb[2], full->nb[3],
                                                  (y0 - top) * full->nb[1]));
             }
+            if (getenv("SEETHROUGH_DEBUG_ROWCHUNK")) {
+                fprintf(stderr, "[rowchunk] H=%lld W=%lld C=%lld TS=%lld y0=%lld y1=%lld top=%lld bot=%lld "
+                                "ys.ne=(%lld,%lld,%lld,%lld) acc.ne=(%lld,%lld,%lld,%lld)\n",
+                        (long long) H, (long long) W, (long long) C, (long long) TS,
+                        (long long) y0, (long long) y1, (long long) top, (long long) bot,
+                        (long long) ys->ne[0], (long long) ys->ne[1], (long long) ys->ne[2], (long long) ys->ne[3],
+                        acc ? (long long) acc->ne[0] : -1, acc ? (long long) acc->ne[1] : -1,
+                        acc ? (long long) acc->ne[2] : -1, acc ? (long long) acc->ne[3] : -1);
+            }
             acc = acc ? ggml_concat(ctx, acc, ys, 1) : ys;
         }
         m.conv_row_chunk = rc;

@@ -72,6 +72,27 @@ int main(int argc, char ** argv) {
     }
     setvbuf(stdout, nullptr, _IONBF, 0);
 
+    // --res / --depth-res must be a multiple of each VAE decoder's total
+    // upsample stride (skip-connection concat requires matching down/up
+    // spatial sizes at every level) -- trans-vae has 6 stages (2^6=64),
+    // marigold-vae has 3 (2^3=8). Round up rather than let the decoder
+    // hit a ggml_concat shape-mismatch assert deep in a multi-minute run.
+    auto round_up = [](int v, int div) { return ((v + div - 1) / div) * div; };
+    int res64 = round_up(cfg.res, 64);
+    if (res64 != cfg.res) {
+        fprintf(stderr, "note: --res %d is not a multiple of 64 (trans-vae's decoder needs "
+                        "this for its 6-stage skip connections) -- rounding up to %d\n",
+                cfg.res, res64);
+        cfg.res = res64;
+    }
+    int depth8 = round_up(cfg.depth_res, 8);
+    if (depth8 != cfg.depth_res) {
+        fprintf(stderr, "note: --depth-res %d is not a multiple of 8 (marigold-vae's decoder "
+                        "needs this for its 3-stage skip connections) -- rounding up to %d\n",
+                cfg.depth_res, depth8);
+        cfg.depth_res = depth8;
+    }
+
     Image input;
     if (!load_image(in_path, input)) { fprintf(stderr, "failed to load %s\n", in_path.c_str()); return 1; }
     printf("input: %dx%d\n", input.w, input.h);
@@ -91,13 +112,54 @@ int main(int argc, char ** argv) {
         page_alpha[i] = fullpage.data[i * 4 + 3];
     }
 
+    if (!cfg.debug_dir.empty()) {
+        Image dbg; dbg.w = dbg.h = RES; dbg.c = 1;
+        dbg.data = page_alpha;
+        std::ofstream f(cfg.debug_dir + "/page_alpha.png", std::ios::binary);
+        std::vector<uint8_t> png = encode_png(dbg);
+        f.write(reinterpret_cast<const char *>(png.data()), (std::streamsize) png.size());
+        int rows_nonzero = 0;
+        for (int y = 0; y < RES; y++) {
+            bool any = false;
+            for (int x = 0; x < RES; x++) if (page_alpha[(size_t) y * RES + x] > 0.5f) { any = true; break; }
+            if (any) rows_nonzero++;
+        }
+        printf("[debug] page_alpha: %d/%d rows have any nonzero alpha (pad_w=%d pad_h=%d pad_x=%d pad_y=%d)\n",
+               rows_nonzero, RES, pad_w, pad_h, pad_x, pad_y);
+    }
+
     // ---- layerdiff pass 1: body ----
     std::vector<float> ehs, pooled;
     if (!encode_tags(cfg, BODY_TAGS_V3, ehs, pooled)) return 1;
     std::vector<Image> body_layers;
     if (!layerdiff_pass(cfg, page_rgb, ehs, pooled, 0, body_layers)) return 1;
+
+    std::vector<float> pre_mul_alpha5;   // snapshot before the page_alpha multiply
+    if (!cfg.debug_dir.empty() && body_layers.size() > 5) {
+        Image & l = body_layers[5];
+        pre_mul_alpha5.resize((size_t) l.w * l.h);
+        for (size_t i = 0; i < pre_mul_alpha5.size(); i++) pre_mul_alpha5[i] = l.data[i * 4 + 3];
+    }
+
     for (Image & l : body_layers) {
         for (size_t i = 0; i < page_alpha.size(); i++) l.data[i * 4 + 3] *= page_alpha[i];
+    }
+
+    if (!cfg.debug_dir.empty() && body_layers.size() > 5) {
+        Image & l = body_layers[5];   // topwear, pre-alpha_floor
+        printf("[debug] body_layers[5] (topwear), w=%d h=%d, page_alpha.size=%zu\n",
+               l.w, l.h, page_alpha.size());
+        for (int y = 0; y < l.h; y += (l.h / 20 > 0 ? l.h / 20 : 1)) {
+            float pre_max = 0, pa_max = 0, post_max = 0;
+            for (int x = 0; x < l.w; x++) {
+                size_t i = (size_t) y * l.w + x;
+                pre_max = std::max(pre_max, pre_mul_alpha5[i]);
+                pa_max = std::max(pa_max, page_alpha[i]);
+                post_max = std::max(post_max, l.px(x, y)[3]);
+            }
+            printf("[debug]   row %4d: pre_alpha=%.4f page_alpha=%.4f post_alpha=%.4f\n",
+                   y, pre_max, pa_max, post_max);
+        }
     }
 
     // ---- head crop + pass 2 ----

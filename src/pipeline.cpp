@@ -59,7 +59,7 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
     if (d) {
         if (unet) {
             m.flash_attn = true;    // naive 80x80 spatial attention is ~21GB at 1280px
-            m.direct_conv = true;
+            m.direct_conv = !getenv("SEETHROUGH_NO_DIRECT_CONV");
         }                           // VRAM; NOT for VAEs: ggml_conv_2d_direct is
                                     // wrong for the encoder s2/p0 downsample path
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
