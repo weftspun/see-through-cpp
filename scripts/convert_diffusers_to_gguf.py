@@ -53,7 +53,8 @@ def quantize_q4_0(arr):
     amax_idx = np.argmax(np.abs(x), axis=1)
     max_val = x[np.arange(x.shape[0]), amax_idx]
     d = max_val / -8.0
-    id_ = np.where(d != 0, 1.0 / d, 0.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        id_ = np.where(d != 0, 1.0 / d, 0.0)
     xq = (x * id_[:, None]).astype(np.float32)
     x0, x1 = xq[:, 0:16], xq[:, 16:32]
     xi0 = np.minimum(15, (x0 + 8.5).astype(np.int8)).astype(np.uint8)
