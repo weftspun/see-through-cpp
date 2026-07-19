@@ -181,6 +181,19 @@ int main(int argc, char ** argv) {
     }
     for (auto & kv : v3_layers) alpha_floor(kv.second);
 
+    if (!cfg.debug_dir.empty()) {
+        // temporary: dump one full, UNCROPPED layer to see the raw alpha
+        // spatial distribution before crop_part's bbox tightens it
+        auto it = v3_layers.find("topwear");
+        if (it != v3_layers.end()) {
+            std::ofstream f(cfg.debug_dir + "/raw_topwear_full.png", std::ios::binary);
+            std::vector<uint8_t> png = encode_png(it->second);
+            f.write(reinterpret_cast<const char *>(png.data()), (std::streamsize) png.size());
+            printf("[debug] dumped raw uncropped topwear layer (%dx%d)\n",
+                   it->second.w, it->second.h);
+        }
+    }
+
     // ---- marigold: assemble the V2 list (compose eyes/hair), page last ----
     const std::map<std::string, std::vector<std::string>> COMPOSE = {
         { "eyes", { "eyewhite", "irides", "eyelash", "eyebrow" } },
