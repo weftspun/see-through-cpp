@@ -241,6 +241,33 @@ Policy:
       item couldn't be re-tried. Needs either that sample set restored or a
       concrete repro (which image/tag/seed) before a fix can be targeted —
       speculative code changes without a visible symptom aren't worth it.
+      **Second repro attempt, still not reproducible**: tried two more
+      upstream test images (`test_image1.png` — simple, hands hidden;
+      `test_image2.png` — ornate multi-layer kimono, black background) at
+      full production settings (1280px/30 steps). Two apparent leads, both
+      false: (1) a cheap 512px/8-step smoke run on `test_image1` showed a
+      sharp pad-boundary artifact and hazy legwear content — did not
+      reproduce at full 1280px/30-step settings on the same image, so it
+      was a low-step/low-res artifact, not a production-scale bug; (2) the
+      `bottomwear`/`back_hair` layers from `test_image2` appeared to have
+      a solid muddy-purple wash covering most of the canvas instead of a
+      transparent background — turned out to be a rendering artifact of
+      quickly eyeballing the raw PNG rather than a real defect: every
+      "washed" pixel has alpha=0 (confirmed via numpy histogram), and
+      compositing properly with `Image.alpha_composite` over white shows
+      both layers are actually clean, correctly cropped, full-detail
+      content. **Lesson for future debugging**: always alpha-composite
+      before judging a layer PNG by eye — a naive viewer can make a
+      fully-transparent region with leftover non-zero RGB look like an
+      opaque defect. The one remaining oddity (a garbled secondary blob in
+      `test_image2`'s `headwear` layer, alongside two clean hair-bow
+      shapes) reads as a genuine model-fidelity limit on this character's
+      unusually complex layered hair ornaments (chains, tassels) rather
+      than an implementation bug — no seam, no alpha-floor cutoff, no
+      coordinate error, just softer detail on a hard case. Still no
+      actionable repro found across three different characters/poses at
+      production settings; this item stays open pending either a restored
+      upstream sample set or a user-reported concrete case.
 - [x] Upstream parity: match our SVG's per-tag layers against upstream's
       output by tag name and compare alpha masks + depth ordering.
       Reversed the earlier ThorVG-vs-PSD-reader decision: our own SVG
