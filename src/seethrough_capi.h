@@ -28,10 +28,11 @@ extern "C" {
 #endif
 
 typedef struct st_case {
-    const char * op;      // "conv2d" | "attn"
-    int32_t w, h, c, oc;  // conv2d: spatial + channels
+    const char * op;      // "conv2d" | "attn" | "linear_quant"
+    int32_t w, h, c, oc;  // conv2d: spatial + channels; linear_quant: c=in, oc=out
     int32_t stride;       // conv2d: 1 or 2 (pad fixed at 1, k3)
-    int32_t heads, tq, tk, batch;   // attn: head count (dim 64), tokens
+    int32_t heads, tq, tk, batch;   // attn: head count (dim 64), tokens;
+                                    // linear_quant: tq = token count (batch of rows)
     int32_t direct;       // conv2d knob: ggml_conv_2d_direct
     int32_t rowchunk;     // conv2d knob: row-chunked im2col
     int32_t flash;        // attn knob: ggml_flash_attn_ext
@@ -47,8 +48,10 @@ ST_API double st_witness_check(const st_case * c);
 ST_API const char * st_device(void);
 
 // Flat-scalar variant for FFI hosts without struct marshalling (Lean 4
-// @[extern]): op 0 = conv2d, 1 = attn; knobs bit0 = direct, bit1 = rowchunk,
-// bit2 = flash. Deterministic in all arguments.
+// @[extern]): op 0 = conv2d, 1 = attn, 2 = linear_quant (c=in, oc=out,
+// tq=token count; candidate weight is ggml's own Q4_0, reference is f32);
+// knobs bit0 = direct, bit1 = rowchunk, bit2 = flash (ignored for op 2).
+// Deterministic in all arguments.
 ST_API double st_witness_check_flat(uint32_t op, uint32_t w, uint32_t h, uint32_t c,
                              uint32_t oc, uint32_t stride, uint32_t heads,
                              uint32_t tq, uint32_t tk, uint32_t batch,

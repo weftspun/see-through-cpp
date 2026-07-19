@@ -6,6 +6,8 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
+#include "ggml-common.h"   // block_q4_0 layout (private ggml header)
+#include "ggml-quants.h"   // quantize_row_q4_0_ref (private ggml header)
 
 #include <cmath>
 #include <cstring>
@@ -159,6 +161,23 @@ std::vector<float> attn_run(Fixture & fx, const st_case & c, bool flash,
     return r;
 }
 
+// linear() with either the f32 reference weight or a Q4_0 candidate,
+// swapped in the Fixture's weight map (both point at the same in/out shape)
+std::vector<float> linear_run(Fixture & fx, const st_case & c, bool quantized,
+                              ggml_tensor * f32w, ggml_tensor * qw,
+                              const std::vector<float> & x) {
+    fx.m.weights["w.weight"] = quantized ? qw : f32w;
+    ggml_tensor * xt = nullptr;
+    auto r = run1(fx,
+        [&]() {
+            xt = ggml_new_tensor_2d(fx.m.ctx_g, GGML_TYPE_F32, f32w->ne[0], c.tq);
+            ggml_set_input(xt);
+            return linear(fx.m, xt, "w");
+        },
+        [&]() { ggml_backend_tensor_set(xt, x.data(), 0, x.size() * 4); });
+    return r;
+}
+
 } // namespace
 
 double st_witness_check_flat(uint32_t op, uint32_t w, uint32_t h, uint32_t c,
@@ -166,7 +185,7 @@ double st_witness_check_flat(uint32_t op, uint32_t w, uint32_t h, uint32_t c,
                              uint32_t tq, uint32_t tk, uint32_t batch,
                              uint32_t knobs, uint64_t seed) {
     st_case sc = {};
-    sc.op = op == 0 ? "conv2d" : "attn";
+    sc.op = op == 0 ? "conv2d" : (op == 1 ? "attn" : "linear_quant");
     sc.w = (int32_t) w; sc.h = (int32_t) h; sc.c = (int32_t) c; sc.oc = (int32_t) oc;
     sc.stride = (int32_t) stride;
     sc.heads = (int32_t) heads; sc.tq = (int32_t) tq; sc.tk = (int32_t) tk;
@@ -205,6 +224,46 @@ double st_witness_check(const st_case * c) {
         auto ref = attn_run(fx, *c, false, q, kv);
         auto cand = attn_run(fx, *c, c->flash != 0, q, kv);
         return interval_violation(cand, ref, 1e-3, 8.0 / 1024.0);
+    }
+    if (strcmp(c->op, "linear_quant") == 0) {
+        // Q4_0 blocks are 32 contiguous elements of the input (row/in_features)
+        // dimension — the same constraint the GGUF converter enforces
+        if (c->c < 32 || c->c % 32 != 0 || c->oc < 1 || c->tq < 1) return -1.0;
+        Fixture fx(c->seed);
+        fx.weight("w.weight", { c->c, c->oc });
+        fx.weight("w.bias", { c->oc });
+        fx.commit();
+
+        ggml_tensor * f32w = fx.m.weights["w.weight"];
+        std::vector<float> wvals(ggml_nelements(f32w));
+        ggml_backend_tensor_get(f32w, wvals.data(), 0, wvals.size() * sizeof(float));
+
+        ggml_init_params ipq = { ggml_tensor_overhead() + 1024, nullptr, true };
+        ggml_context * ctx_q = ggml_init(ipq);
+        ggml_tensor * qw = ggml_new_tensor_2d(ctx_q, GGML_TYPE_Q4_0, f32w->ne[0], f32w->ne[1]);
+        ggml_backend_t probe = capi_backend();
+        ggml_backend_buffer_t qbuf = ggml_backend_alloc_ctx_tensors_from_buft(
+            ctx_q, ggml_backend_get_default_buffer_type(probe));
+        ggml_backend_free(probe);
+        fx.m.bufs.push_back(qbuf);
+        fx.m.ctx_w.push_back(ctx_q);
+
+        std::vector<uint8_t> qraw(ggml_nbytes(qw));
+        quantize_row_q4_0_ref(wvals.data(), reinterpret_cast<block_q4_0 *>(qraw.data()),
+                              (int64_t) wvals.size());
+        ggml_backend_tensor_set(qw, qraw.data(), 0, qraw.size());
+
+        std::vector<float> x = fx.randvec((size_t) c->c * c->tq);
+        auto ref = linear_run(fx, *c, false, f32w, qw, x);
+        auto cand = linear_run(fx, *c, true, f32w, qw, x);
+        // Q4_0's per-block max element error is amax_block/16 (half the
+        // quant step d=amax/8) — an inherent ~6.25% relative-error floor,
+        // not a rounding artifact that shrinks with the reduction length
+        // (signal and quantization noise both scale with sqrt(in_features)
+        // for random weights, so relative error stays roughly flat). 0.15
+        // gives headroom above the ~0.10 measured on a synthetic probe
+        // while still catching shapes that degrade further.
+        return interval_violation(cand, ref, 1e-3, 0.15);
     }
     return -1.0;
 }

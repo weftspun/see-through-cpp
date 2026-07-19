@@ -22,6 +22,8 @@ Usage:
     python convert_diffusers_to_gguf.py --component layerdiff-unet [--ftype 1]
     python convert_diffusers_to_gguf.py --repo <id> --subfolder unet --arch my-arch
 ftype: 0 = f32, 1 = f16 (default; 2D+ weights only, norms/biases stay f32)
+       2 = q4_0 (nn.Linear weights only, matching upstream's own NF4 scope;
+           conv kernels/norms/biases stay f16/f32 -- see quantize_q4_0())
 """
 
 import argparse
@@ -36,8 +38,34 @@ GGUF_VERSION = 3
 GGUF_ALIGNMENT = 32
 GGML_TYPE_F32 = 0
 GGML_TYPE_F16 = 1
+GGML_TYPE_Q4_0 = 2
 GGUF_VT_UINT32 = 4
 GGUF_VT_STRING = 8
+
+QK4_0 = 32  # ggml block_q4_0: one f16 scale + 32 packed 4-bit values (16 bytes)
+
+
+def quantize_q4_0(arr):
+    """arr: 2D float32 (out_features, in_features), in_features % QK4_0 == 0.
+    Matches ggml's quantize_row_q4_0_ref bit-for-bit (row-major blocks never
+    cross a row boundary since in_features % QK4_0 == 0)."""
+    x = arr.reshape(-1, QK4_0).astype(np.float64)  # widen: avoid fp32 tie/round drift
+    amax_idx = np.argmax(np.abs(x), axis=1)
+    max_val = x[np.arange(x.shape[0]), amax_idx]
+    d = max_val / -8.0
+    id_ = np.where(d != 0, 1.0 / d, 0.0)
+    xq = (x * id_[:, None]).astype(np.float32)
+    x0, x1 = xq[:, 0:16], xq[:, 16:32]
+    xi0 = np.minimum(15, (x0 + 8.5).astype(np.int8)).astype(np.uint8)
+    xi1 = np.minimum(15, (x1 + 8.5).astype(np.int8)).astype(np.uint8)
+    qs = (xi0 | (xi1 << 4)).astype(np.uint8)
+    d16 = d.astype(np.float32).astype("<f2").tobytes()
+    out = bytearray()
+    d16_view = np.frombuffer(d16, dtype="<f2")
+    for i in range(x.shape[0]):
+        out += d16_view[i].tobytes()
+        out += qs[i].tobytes()
+    return bytes(out)
 
 COMPONENTS = {
     "layerdiff-unet": ("layerdifforg/seethroughv0.0.2_layerdiff3d", "unet"),
@@ -101,6 +129,16 @@ def load_safetensors(path):
 def choose_type(name, shape, ftype):
     if ftype == 0:
         return GGML_TYPE_F32
+    if ftype == 2:
+        # nn.Linear weights only (2D, in_features % QK4_0 == 0) — matches
+        # upstream's own NF4 scope (bitsandbytes Linear4bit; conv kernels are
+        # untouched there too, and their innermost dim (kw=3) can't form
+        # 32-element blocks anyway)
+        if len(shape) == 2 and "norm" not in name and shape[-1] % QK4_0 == 0:
+            return GGML_TYPE_Q4_0
+        if len(shape) >= 2 and "norm" not in name:
+            return GGML_TYPE_F16
+        return GGML_TYPE_F32
     if len(shape) >= 2 and "norm" not in name:
         return GGML_TYPE_F16
     return GGML_TYPE_F32
@@ -110,6 +148,8 @@ def to_bytes(arr, gtype):
     arr = np.ascontiguousarray(arr, dtype=np.float32)
     if gtype == GGML_TYPE_F32:
         return arr.astype("<f4", copy=False).tobytes()
+    if gtype == GGML_TYPE_Q4_0:
+        return quantize_q4_0(arr)
     return arr.astype("<f2").tobytes()
 
 
@@ -120,7 +160,9 @@ def main():
     ap.add_argument("--subfolder", default=None)
     ap.add_argument("--arch", default=None, help="general.architecture value")
     ap.add_argument("--output", default=None)
-    ap.add_argument("--ftype", type=int, default=1, choices=[0, 1])
+    ap.add_argument("--ftype", type=int, default=1, choices=[0, 1, 2],
+                     help="0=f32, 1=f16 (default), 2=q4_0 (Linear weights only, "
+                          "rest stays f16/f32)")
     args = ap.parse_args()
 
     tok_sub = None
@@ -162,14 +204,16 @@ def main():
     print("loading state_dict...")
     sd = load_safetensors(model_path)
     tensors = []
-    n_f16 = 0
+    n_f16 = n_q4 = 0
     for name in sorted(sd.keys()):
         arr = sd[name]
         gtype = choose_type(name, arr.shape, args.ftype)
         n_f16 += gtype == GGML_TYPE_F16
+        n_q4 += gtype == GGML_TYPE_Q4_0
         dims = list(reversed(arr.shape)) if arr.ndim else [1]  # ggml ne[] order
         tensors.append((name, gtype, dims, to_bytes(arr, gtype)))
-    print(f"tensors: {len(tensors)}  (f16={n_f16}, f32={len(tensors) - n_f16})")
+    n_f32 = len(tensors) - n_f16 - n_q4
+    print(f"tensors: {len(tensors)}  (q4_0={n_q4}, f16={n_f16}, f32={n_f32})")
 
     header = bytearray()
     header += GGUF_MAGIC
