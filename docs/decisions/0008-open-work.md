@@ -65,12 +65,16 @@ Policy:
       frame's latent at res=512 clearly shows the real shape. **The
       collapse is confirmed to originate in the main diffusion UNet's
       forward pass** (`unet_frame_forward`, `unet_frame.cpp`), not
-      `vae_decode`/`unet1024` at all — the per-row latent stats check
-      earlier in this investigation missed this because a flat field and a
-      real image can have similar row-wise averages. Next step: apply the
-      same per-stage tap + grayscale-visualization technique to
-      `unet_frame_forward`'s resnets/attention/cross-frame blocks to
-      bisect where inside the main UNet the signal goes flat. See
+      `vae_decode`/`unet1024` at all. Extended the same tap technique into
+      `unet_frame_forward` itself: per-step `eps`/aggregate mean-std stats
+      turned out inconclusive (both look/decay the same at 512 and 1280),
+      but dumping **every one of the 13 frames'** final latents shows
+      **all of them** are uniformly flat at res=1280 (checked front hair,
+      head, topwear, tail) — ruling out a single bad per-tag prompt/
+      embedding and pointing at something structural across the whole
+      batch, most likely `cross_frame_block` (the cross-frame mixing
+      attention). Not yet tested in isolation (e.g. a bypass toggle,
+      mirroring how `direct_conv`/`flash_attn` were excluded). See
       docs/ggml-upstream-issues.md item 4's latest status note.
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,

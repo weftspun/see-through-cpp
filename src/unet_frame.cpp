@@ -182,56 +182,74 @@ ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * 
     m.gn_groups = 32; m.gn_eps = 1e-5f;
 
     sample = conv2d(m, sample, "conv_in");
-    if (taps) taps->push_back(sample);
+    if (taps) { taps->push_back(sample); }
+    debug_tap(m, "unet.conv_in", sample);
 
     std::vector<ggml_tensor *> res_stack = { sample };
-    char pre[96];
+    char pre[96], tapname[96];
     for (int i = 0; ; i++) {
         snprintf(pre, sizeof(pre), "down_blocks.%d", i);
-        if (!m.has(std::string(pre) + ".resnets.0.norm1.weight")) break;
+        if (!m.has(std::string(pre) + ".resnets.0.norm1.weight")) { break; }
         for (int r = 0; ; r++) {
             snprintf(pre, sizeof(pre), "down_blocks.%d.resnets.%d", i, r);
-            if (!m.has(std::string(pre) + ".norm1.weight")) break;
+            if (!m.has(std::string(pre) + ".norm1.weight")) { break; }
             sample = resnet_block(m, sample, pre, emb);
+            snprintf(tapname, sizeof(tapname), "unet.down%d.resnet%d", i, r);
+            debug_tap(m, tapname, sample);
             snprintf(pre, sizeof(pre), "down_blocks.%d.attentions.%d", i, r);
             sample = maybe_t3d(m, sample, ehs, pre);
+            snprintf(tapname, sizeof(tapname), "unet.down%d.attn%d", i, r);
+            debug_tap(m, tapname, sample);
             res_stack.push_back(sample);
         }
         snprintf(pre, sizeof(pre), "down_blocks.%d.downsamplers.0.conv", i);
         if (m.has(std::string(pre) + ".weight")) {
             sample = conv2d(m, sample, pre, 2, 1);
             res_stack.push_back(sample);
+            snprintf(tapname, sizeof(tapname), "unet.down%d.downsample", i);
+            debug_tap(m, tapname, sample);
         }
-        if (taps) taps->push_back(sample);
+        if (taps) { taps->push_back(sample); }
     }
 
     sample = resnet_block(m, sample, "mid_block.resnets.0", emb);
+    debug_tap(m, "unet.mid.resnet0", sample);
     sample = maybe_t3d(m, sample, ehs, "mid_block.attentions.0");
+    debug_tap(m, "unet.mid.attn", sample);
     sample = resnet_block(m, sample, "mid_block.resnets.1", emb);
-    if (taps) taps->push_back(sample);
+    if (taps) { taps->push_back(sample); }
+    debug_tap(m, "unet.mid.resnet1", sample);
 
     for (int i = 0; ; i++) {
         snprintf(pre, sizeof(pre), "up_blocks.%d", i);
-        if (!m.has(std::string(pre) + ".resnets.0.norm1.weight")) break;
+        if (!m.has(std::string(pre) + ".resnets.0.norm1.weight")) { break; }
         for (int r = 0; ; r++) {
             snprintf(pre, sizeof(pre), "up_blocks.%d.resnets.%d", i, r);
-            if (!m.has(std::string(pre) + ".norm1.weight")) break;
+            if (!m.has(std::string(pre) + ".norm1.weight")) { break; }
             ggml_tensor * res = res_stack.back(); res_stack.pop_back();
             sample = ggml_concat(ctx, sample, res, 2);
             sample = resnet_block(m, sample, pre, emb);
+            snprintf(tapname, sizeof(tapname), "unet.up%d.resnet%d", i, r);
+            debug_tap(m, tapname, sample);
             snprintf(pre, sizeof(pre), "up_blocks.%d.attentions.%d", i, r);
             sample = maybe_t3d(m, sample, ehs, pre);
+            snprintf(tapname, sizeof(tapname), "unet.up%d.attn%d", i, r);
+            debug_tap(m, tapname, sample);
         }
         snprintf(pre, sizeof(pre), "up_blocks.%d.upsamplers.0.conv", i);
         if (m.has(std::string(pre) + ".weight")) {
             sample = ggml_upscale(ctx, sample, 2, GGML_SCALE_MODE_NEAREST);
             sample = conv2d(m, sample, pre);
+            snprintf(tapname, sizeof(tapname), "unet.up%d.upsample", i);
+            debug_tap(m, tapname, sample);
         }
     }
 
     sample = group_norm_affine(m, sample, "conv_norm_out");
     sample = ggml_silu(ctx, sample);
-    return conv2d(m, sample, "conv_out");
+    sample = conv2d(m, sample, "conv_out");
+    debug_tap(m, "unet.conv_out", sample);
+    return sample;
 }
 
 ggml_tensor * sdxl_add_embed(Model & m, ggml_tensor * text_embeds, ggml_tensor * time_ids) {

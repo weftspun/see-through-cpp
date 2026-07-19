@@ -2,12 +2,6 @@
 
 #include <cstdio>
 
-static void tap(Model & m, const std::string & name, ggml_tensor * t) {
-    if (!m.debug_capture) { return; }
-    ggml_set_output(t);
-    m.debug_taps.push_back({ name, { t->ne[0], t->ne[1], t->ne[2], t->ne[3] }, t });
-}
-
 ggml_tensor * vae_encode(Model & m, ggml_tensor * x) {
     ggml_context * ctx = m.ctx_g;
     m.gn_groups = 32; m.gn_eps = 1e-6f; m.head_dim = 0;
@@ -47,14 +41,14 @@ ggml_tensor * vae_decode(Model & m, ggml_tensor * z) {
 
     ggml_tensor * sample = conv2d(m, z, "post_quant_conv", 1, 0);   // 1x1
     sample = conv2d(m, sample, "decoder.conv_in");
-    tap(m, "vae.conv_in", sample);
+    debug_tap(m, "vae.conv_in", sample);
 
     sample = resnet_block(m, sample, "decoder.mid_block.resnets.0");
-    tap(m, "vae.mid.resnet0", sample);
+    debug_tap(m, "vae.mid.resnet0", sample);
     sample = attn_block(m, sample, "decoder.mid_block.attentions.0");
-    tap(m, "vae.mid.attn", sample);
+    debug_tap(m, "vae.mid.attn", sample);
     sample = resnet_block(m, sample, "decoder.mid_block.resnets.1");
-    tap(m, "vae.mid.resnet1", sample);
+    debug_tap(m, "vae.mid.resnet1", sample);
 
     for (int i = 0; i < 4; i++) {
         char pre[64];
@@ -64,20 +58,20 @@ ggml_tensor * vae_decode(Model & m, ggml_tensor * z) {
         }
         char tapname[64];
         snprintf(tapname, sizeof(tapname), "vae.up%d.resnets", i);
-        tap(m, tapname, sample);
+        debug_tap(m, tapname, sample);
         snprintf(pre, sizeof(pre), "decoder.up_blocks.%d.upsamplers.0.conv", i);
         if (m.has(std::string(pre) + ".weight")) {
             sample = ggml_upscale(ctx, sample, 2, GGML_SCALE_MODE_NEAREST);
             sample = conv2d(m, sample, pre);
             snprintf(tapname, sizeof(tapname), "vae.up%d.upsample", i);
-            tap(m, tapname, sample);
+            debug_tap(m, tapname, sample);
         }
     }
 
     sample = group_norm_affine(m, sample, "decoder.conv_norm_out");
     sample = ggml_silu(ctx, sample);
     sample = conv2d(m, sample, "decoder.conv_out");
-    tap(m, "vae.conv_out", sample);
+    debug_tap(m, "vae.conv_out", sample);
     return sample;
 }
 
@@ -88,7 +82,7 @@ ggml_tensor * unet1024(Model & m, ggml_tensor * x, ggml_tensor * latent) {
 
     ggml_tensor * sample_latent = conv2d(m, latent, P + "latent_conv_in", 1, 0); // 1x1
     ggml_tensor * sample = conv2d(m, x, P + "conv_in");
-    tap(m, "u1024.conv_in", sample);
+    debug_tap(m, "u1024.conv_in", sample);
 
     std::vector<ggml_tensor *> res_stack = { sample };
     const bool down_attn[7] = { false, false, false, false, true, true, true };
@@ -99,30 +93,30 @@ ggml_tensor * unet1024(Model & m, ggml_tensor * x, ggml_tensor * latent) {
             snprintf(pre, sizeof(pre), "down_blocks.%d.resnets.%d", i, r);
             sample = resnet_block(m, sample, P + pre);
             snprintf(tapname, sizeof(tapname), "u1024.down%d.resnet%d", i, r);
-            tap(m, tapname, sample);
+            debug_tap(m, tapname, sample);
             if (down_attn[i]) {
                 snprintf(pre, sizeof(pre), "down_blocks.%d.attentions.%d", i, r);
                 sample = attn_block(m, sample, P + pre);
                 snprintf(tapname, sizeof(tapname), "u1024.down%d.attn%d", i, r);
-                tap(m, tapname, sample);
+                debug_tap(m, tapname, sample);
             }
             res_stack.push_back(sample);
         }
         snprintf(tapname, sizeof(tapname), "u1024.down%d", i);
-        tap(m, tapname, sample);
+        debug_tap(m, tapname, sample);
         snprintf(pre, sizeof(pre), "down_blocks.%d.downsamplers.0.conv", i);
         if (m.has(P + pre + ".weight")) {
             sample = conv2d(m, sample, P + pre, 2, 1);
             res_stack.push_back(sample);
             snprintf(tapname, sizeof(tapname), "u1024.down%d.downsample", i);
-            tap(m, tapname, sample);
+            debug_tap(m, tapname, sample);
         }
     }
 
     sample = resnet_block(m, sample, P + "mid_block.resnets.0");
     sample = attn_block(m, sample, P + "mid_block.attentions.0");
     sample = resnet_block(m, sample, P + "mid_block.resnets.1");
-    tap(m, "u1024.mid", sample);
+    debug_tap(m, "u1024.mid", sample);
 
     const bool up_attn[7] = { true, true, true, false, false, false, false };
     for (int i = 0; i < 7; i++) {
@@ -138,20 +132,20 @@ ggml_tensor * unet1024(Model & m, ggml_tensor * x, ggml_tensor * latent) {
             }
         }
         snprintf(tapname, sizeof(tapname), "u1024.up%d", i);
-        tap(m, tapname, sample);
+        debug_tap(m, tapname, sample);
         snprintf(pre, sizeof(pre), "up_blocks.%d.upsamplers.0.conv", i);
         if (m.has(P + pre + ".weight")) {
             sample = ggml_upscale(ctx, sample, 2, GGML_SCALE_MODE_NEAREST);
             sample = conv2d(m, sample, P + pre);
             snprintf(tapname, sizeof(tapname), "u1024.up%d.upsample", i);
-            tap(m, tapname, sample);
+            debug_tap(m, tapname, sample);
         }
     }
 
     sample = group_norm_affine(m, sample, P + "conv_norm_out");
     sample = ggml_silu(ctx, sample);
     sample = conv2d(m, sample, P + "conv_out");
-    tap(m, "u1024.conv_out", sample);
+    debug_tap(m, "u1024.conv_out", sample);
     return sample;
 }
 

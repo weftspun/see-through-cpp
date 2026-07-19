@@ -76,6 +76,12 @@ struct Model {
 // (1,1,C,1) reshape for NCHW-broadcast of a per-channel bias
 ggml_tensor * bias4d(ggml_context * ctx, ggml_tensor * b);
 
+// diagnostic stage tap (docs/ggml-upstream-issues.md #4): no-op unless
+// m.debug_capture is set; otherwise marks t as a graph output (so gallocr
+// preserves its buffer) and records it in m.debug_taps for the caller to
+// read back and visualize after compute
+void debug_tap(Model & m, const std::string & name, ggml_tensor * t);
+
 // conv + bias; pad 0 for 1x1 convs
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre,
                      int stride = 1, int pad = 1);

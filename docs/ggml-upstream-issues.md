@@ -306,12 +306,44 @@ that's the logical next step (same per-stage tap + grayscale-visualization
 technique, applied to `unet_frame_forward`'s resnets/attention/cross-frame
 blocks).
 
+Update: added the same per-stage tap + grayscale-visualization
+instrumentation to `unet_frame_forward` (`unet.conv_in`/`down*`/`mid`/
+`up*`/`conv_out`, `SEETHROUGH_DEBUG_UNET_STAGES=1`, `ustage_*.png` in
+`--debug-dir`), captured on the last sampling step. Unlike the VAE decode
+stages, these visualizations are inconclusive on their own: `eps` (the
+noise prediction) looks like fine-grained noise at every stage, at *both*
+res=512 and res=1280 — expected, since a per-step noise-residual
+prediction doesn't carry directly-visible image structure the way a
+decoded pixel or VAE feature map does. Per-step aggregate lat mean/std
+(the existing `[debug] step N ...` printf) also decay in near-identical
+trajectories at both resolutions (std 0.98 -> 0.51-0.57 over 8 steps),
+so this angle can't distinguish good from bad either.
+
+Went back to the one signal that *does* show the collapse clearly (the
+final latent's spatial content, not eps or per-step aggregates) and
+extended it to all 13 frames instead of just frame 5 (topwear). Result:
+**every single frame is uniformly flat at res=1280** (checked frames
+0, 2, 5, 10 explicitly — front hair, head, topwear, tail — all flat).
+This rules out a per-tag/per-prompt conditioning bug (a bad text
+embedding for one specific tag would only flatten that one frame) and
+points at something structural that acts uniformly across the whole
+13-frame batch — the cross-frame attention (`cross_frame_block` in
+`unet_frame.cpp`, which mixes information *across* the frame axis) is the
+leading remaining suspect, though not yet directly tested in isolation.
+
 Status: one confirmed and fixed root cause **for a different, real bug**
 (the >4.295GB `attn_block` buffer overflow at `head_dim=8` reduction in
 `unet1024`), kept as an opt-in (`SEETHROUGH_TILED_ATTN`). The 1280px
-visual collapse itself is now known to originate in the main diffusion
-UNet, not the VAE decode chain — redirecting the search there is the next
-step.
+visual collapse is confirmed to originate in the main diffusion UNet
+(not VAE decode), affects all 13 frames uniformly (not a per-tag issue),
+and neither per-step eps visualizations nor aggregate mean/std stats can
+distinguish it from a correct run — only the final per-frame latent
+content shows the defect. Next concrete step: isolate `cross_frame_block`
+specifically (e.g. a toggle to bypass it, or tap its output directly
+rather than only the resnet/attn stages already tapped) to test whether
+disabling cross-frame mixing changes the outcome, the same
+disable-and-compare technique already used to exclude `direct_conv` and
+`flash_attn` earlier in this doc.
 
 ## Remediation policy
 

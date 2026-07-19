@@ -300,6 +300,11 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                                            "time_embedding");
         ggml_tensor * aug = ggml_add(ctx, text, group_embedding(m, text, "group_embeds." + gi));
         emb = ggml_add(ctx, emb, sdxl_add_embed(m, aug, tids));
+        // diagnostic for docs/ggml-upstream-issues.md #4: pinning where in
+        // the main diffusion UNet's forward pass the res=1280 output goes
+        // flat (already ruled out as a vae_decode/unet1024 issue -- the
+        // latent itself is flat before decode ever runs)
+        m.debug_capture = getenv("SEETHROUGH_DEBUG_UNET_STAGES") != nullptr;
         ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs2);
         ggml_set_output(out);
 
@@ -341,6 +346,37 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                        (double) eps[0], mu, sqrt(std::max(0.0, acc2 / lat.size() - mu * mu)));
             }
             if (cfg.verbose) { printf("[layerdiff] step %d/%d (t=%d)\r", s + 1, cfg.steps, sch.timesteps[s]); fflush(stdout); }
+            if (m.debug_capture && s == cfg.steps - 1 && !cfg.debug_dir.empty()) {
+                // graph is built once and reused across steps -- taps only
+                // need reading on the step whose eps feeds the final lat.
+                // sample/emb/ehs2 are batched over all F frames (frame axis
+                // is ne[3]); visualize frame 5 (topwear) same as the latent
+                // dump above, planar WHCN so element (x,y,c,n=5) is at
+                // 5*C*H*W + c*H*W + y*W + x
+                const int fvis = 5;
+                for (const Model::DebugTap & dt : m.debug_taps) {
+                    const int64_t W = dt.ne[0], H = dt.ne[1], C = dt.ne[2];
+                    if (W <= 1 || H <= 1) { continue; }
+                    std::vector<float> v(ggml_nelements(dt.t));
+                    ggml_backend_tensor_get(dt.t, v.data(), 0, v.size() * 4);
+                    std::vector<double> mag((size_t) W * H, 0.0);
+                    for (int64_t c = 0; c < C; c++) {
+                        for (int64_t y = 0; y < H; y++) {
+                            for (int64_t x = 0; x < W; x++) {
+                                mag[(size_t) y * W + x] += fabs(v[(size_t) fvis * C * H * W +
+                                    (size_t) c * H * W + (size_t) y * W + x]);
+                            }
+                        }
+                    }
+                    double vmax = 1e-9;
+                    for (double m2 : mag) { vmax = std::max(vmax, m2); }
+                    Image vis;
+                    vis.w = (int) W; vis.h = (int) H; vis.c = 1;
+                    vis.data.resize(mag.size());
+                    for (size_t i = 0; i < mag.size(); i++) { vis.data[i] = (float) (mag[i] / vmax); }
+                    save_image(cfg.debug_dir + "/ustage_" + dt.name + ".png", vis);
+                }
+            }
         }
         if (cfg.verbose) printf("\n");
         ggml_gallocr_free(alloc);
@@ -363,27 +399,31 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                         acc += fabs(lat[(size_t) c * ZR * ZR + (size_t) y * ZR + x]);
                 printf("[debug] latent row %3d mean|v|=%.5f\n", y, acc / (ZR * 4));
             }
-            // channel-collapsed grayscale visualization of frame 5's latent
-            // (topwear): does the LATENT itself already lack spatial
+            // channel-collapsed grayscale visualization of every frame's
+            // latent: does the LATENT itself already lack spatial
             // coherence, or does that only appear once decode runs? Per-row
-            // stats above can't tell scrambled noise from a real shape.
-            const int fvis = 5;
-            std::vector<double> mag((size_t) ZR * ZR, 0.0);
-            for (int c = 0; c < 4; c++) {
-                for (int y = 0; y < ZR; y++) {
-                    for (int x = 0; x < ZR; x++) {
-                        mag[(size_t) y * ZR + x] += fabs(
-                            lat[(size_t) fvis * DZ + (size_t) c * ZR * ZR + (size_t) y * ZR + x]);
+            // stats above can't tell scrambled noise from a real shape. All
+            // F frames dumped (not just topwear) to check whether flatness
+            // is universal or specific to certain semantic-tag frames --
+            // would point at cross-frame mixing vs. per-tag conditioning.
+            for (int fvis = 0; fvis < F; fvis++) {
+                std::vector<double> mag((size_t) ZR * ZR, 0.0);
+                for (int c = 0; c < 4; c++) {
+                    for (int y = 0; y < ZR; y++) {
+                        for (int x = 0; x < ZR; x++) {
+                            mag[(size_t) y * ZR + x] += fabs(
+                                lat[(size_t) fvis * DZ + (size_t) c * ZR * ZR + (size_t) y * ZR + x]);
+                        }
                     }
                 }
+                double vmax = 1e-9;
+                for (double v : mag) { vmax = std::max(vmax, v); }
+                Image vis;
+                vis.w = vis.h = ZR; vis.c = 1;
+                vis.data.resize(mag.size());
+                for (size_t i = 0; i < mag.size(); i++) { vis.data[i] = (float) (mag[i] / vmax); }
+                save_image(cfg.debug_dir + "/latent_frame" + std::to_string(fvis) + ".png", vis);
             }
-            double vmax = 1e-9;
-            for (double v : mag) { vmax = std::max(vmax, v); }
-            Image vis;
-            vis.w = vis.h = ZR; vis.c = 1;
-            vis.data.resize(mag.size());
-            for (size_t i = 0; i < mag.size(); i++) { vis.data[i] = (float) (mag[i] / vmax); }
-            save_image(cfg.debug_dir + "/latent_frame5.png", vis);
         }
     }
 

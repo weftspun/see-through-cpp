@@ -97,6 +97,12 @@ bool Model::has(const std::string & name) const {
     return weights.count(name) != 0;
 }
 
+void debug_tap(Model & m, const std::string & name, ggml_tensor * t) {
+    if (!m.debug_capture) { return; }
+    ggml_set_output(t);
+    m.debug_taps.push_back({ name, { t->ne[0], t->ne[1], t->ne[2], t->ne[3] }, t });
+}
+
 ggml_tensor * bias4d(ggml_context * ctx, ggml_tensor * b) {
     return ggml_reshape_4d(ctx, b, 1, 1, b->ne[0], 1);
 }
