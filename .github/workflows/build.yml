@@ -1,0 +1,100 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+        backend: [cpu, vulkan]
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }} / ${{ matrix.backend }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: seanmiddleditch/gha-setup-ninja@master
+
+      # ggml-vulkan needs Vulkan headers/loader + glslc (shaderc) at build
+      # time to compile its GLSL compute shaders to SPIR-V -- no GPU/driver
+      # needed since GHA runners never execute the resulting binary against
+      # real hardware, this is a compile-only portability check.
+      # humbletim/setup-vulkan-sdk (Khronos-repo-based) doesn't provide
+      # glslc, only glslangValidator -- use the full official SDK bundle
+      # instead, which matches what local dev already builds against.
+      - name: Install Vulkan SDK
+        if: matrix.backend == 'vulkan'
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.296.0
+          cache: true
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_VULKAN=${{ matrix.backend == 'vulkan' && 'ON' || 'OFF' }} \
+            -DSEETHROUGH_BUILD_H3_SERVER=ON
+
+      # Core targets must succeed -- these are the actual product.
+      - name: Build core
+        shell: bash
+        run: cmake --build build --config Release --target see-through --target see-through-server --target seethrough_c --target see_through_c -j
+
+      # The vendored HTTP/3 server has WIN32-specific code paths that were
+      # only ever exercised on Windows so far; best-effort elsewhere -- a
+      # failure here is useful signal but shouldn't block the core build.
+      - name: Build HTTP/3 server (best-effort)
+        shell: bash
+        continue-on-error: true
+        run: cmake --build build --config Release --target see-through-server-h3 -j
+
+      - name: Package binaries
+        shell: bash
+        run: |
+          mkdir -p dist
+          for t in see-through see-through-server see-through-server-h3; do
+            for ext in "" ".exe"; do
+              if [ -f "build/$t$ext" ]; then cp "build/$t$ext" dist/; fi
+            done
+          done
+          for lib in seethrough_c see_through_c; do
+            for ext in .so .dylib .dll; do
+              if [ -f "build/lib$lib$ext" ]; then cp "build/lib$lib$ext" dist/; fi
+              if [ -f "build/$lib$ext" ]; then cp "build/$lib$ext" dist/; fi
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: see-through-${{ matrix.os }}-${{ matrix.backend }}
+          path: dist/
+          if-no-files-found: warn
+
+      # Only macOS actually runs the binaries -- no real GPU/driver on any
+      # GHA runner, so this is a functional smoke test of the CPU-backend
+      # math (scheduler + DDIM trajectories), not a Vulkan correctness
+      # check. Self-contained: only needs the small reference_*.bin
+      # fixtures, not the multi-GB production model weights.
+      - name: Download reference fixtures
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          command -v zstd >/dev/null || brew install zstd
+          gh release download v0.0.2-dev --repo weftspun/see-through-cpp --pattern "reference_bins.tar.zst" --dir /tmp/ref --clobber
+          mkdir -p gen_reference
+          zstd -dc /tmp/ref/reference_bins.tar.zst | tar -xf - -C gen_reference
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run scheduler/DDIM numeric gates
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ./build/test_scheduler gen_reference/reference_scheduler_2step.bin
+          ./build/test_ddim gen_reference/reference_ddim.bin
