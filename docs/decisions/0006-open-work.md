@@ -64,10 +64,13 @@ Policy:
       the only remaining resolution-scaling UNet knob, but disabling it
       to test in isolation OOMs the same way `direct_conv` did (~21.3GB
       single alloc, no VRAM headroom for naive attention at production
-      batch/token counts). Paused pending either a Lean witness case
-      backed by the real loaded checkpoint (not synthetic weights) or a
-      VRAM-safe composed replacement for naive attention at this scale —
-      see docs/ggml-upstream-issues.md item 4's "Status: paused" note.
+      batch/token counts). Multi-seed probing (`tests/probe_flash_bigT.cpp`,
+      8 seeds x every gated shape/batch, Vulkan) found no seed-dependent
+      divergence either -- all comfortably contained. Paused pending
+      either a Lean witness case backed by the real loaded checkpoint (not
+      synthetic weights) or a VRAM-safe composed replacement for naive
+      attention at this scale — see docs/ggml-upstream-issues.md item 4's
+      "Status: paused" note.
 - [x] Found and fixed a related bug while bisecting: the CLI crashed
       (unhandled `abort()`, hanging MSVC dialog) on any `--res`/
       `--depth-res` not a multiple of the VAE decoders' required stride

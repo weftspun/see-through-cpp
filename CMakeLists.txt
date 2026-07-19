@@ -38,3 +38,7 @@ foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_enco
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE seethrough)
 endforeach()
+
+add_executable(probe_flash_bigT tests/probe_flash_bigT.cpp)
+target_link_libraries(probe_flash_bigT PRIVATE seethrough_c)
+target_include_directories(probe_flash_bigT PRIVATE src)

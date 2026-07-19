@@ -103,6 +103,25 @@ hypothesis was — untestable without either a Lean witness case backed by
 the *real* loaded checkpoint weights (not yet built), or another
 VRAM-safe composed replacement for naive attention at this scale.
 
+Update: ran every attention shape/batch combination in `productionDomain`
+through 8 independent seeds instead of one (`tests/probe_flash_bigT.cpp`,
+Vulkan/RTX 4090) to check whether the existing gate's single-seed pass was
+hiding a seed-dependent flash divergence, particularly at B=1. It wasn't:
+all 56 (shape, seed) combinations landed in violation 0.18-0.30, nowhere
+near the 1.0 defect threshold, with no shape or batch showing an outlier.
+This rules out "seed got lucky" as an explanation and leaves the
+real-checkpoint-weight hypothesis as the only remaining untested angle —
+building that requires loading actual trained q/k/v projection weights
+(and ideally real mid-pipeline activations, not fresh random inputs) into
+the FFI harness, not yet done.
+
+(Caution for future runs of this probe: it must be built against
+`build-vulkan/`, not the default `build/` — an earlier attempt this session
+accidentally built against a CPU-only configuration and reproduced item 2's
+CPU-only flash divergence, which looked exactly like a new defect until the
+device was checked. The probe now refuses to run at all if `st_device()`
+reports CPU.)
+
 Status: paused. Both resolution-scaling UNet knobs have been checked as
 thoroughly as a simple enable/disable toggle allows; neither confirms nor
 excludes `flash_attn`, and `direct_conv` is excluded. Root cause of the

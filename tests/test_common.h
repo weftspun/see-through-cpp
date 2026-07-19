@@ -34,17 +34,22 @@ static ggml_backend_t st_backend_init() {
 // load weights to the right place for the selected device;
 // SEETHROUGH_FLASH=1 enables ggml_flash_attn_ext in token attention
 static bool st_load(Model & m, const char * path) {
+    const char * dev = getenv("SEETHROUGH_DEVICE");
+    ggml_backend_dev_t d = (dev && strcmp(dev, "cpu") == 0)
+        ? nullptr : ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
     const char * fa = getenv("SEETHROUGH_FLASH");
-    if (fa && fa[0] == '1') m.flash_attn = true;
+    // ggml_flash_attn_ext diverges from naive attention on CPU for
+    // n_head >= 2 (docs/ggml-upstream-issues.md #2): never honor this
+    // override without a GPU backend actually selected, or a test run
+    // against a CPU-only build silently "fails" on a known, out-of-scope
+    // kernel divergence instead of running the naive path it always uses
+    // in production.
+    if (fa && fa[0] == '1' && d) m.flash_attn = true;
     const char * ch = getenv("SEETHROUGH_CHUNK");
     if (ch && ch[0] == '1') m.direct_conv = true;
     const char * rw = getenv("SEETHROUGH_ROWCHUNK");
     if (rw && rw[0] == '1') m.conv_row_chunk = true;
-    const char * dev = getenv("SEETHROUGH_DEVICE");
-    if (!(dev && strcmp(dev, "cpu") == 0)) {
-        ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
-        if (d) return m.load_backend(path, ggml_backend_dev_buffer_type(d));
-    }
+    if (d) return m.load_backend(path, ggml_backend_dev_buffer_type(d));
     return m.load(path);
 }
 
