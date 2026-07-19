@@ -66,7 +66,3 @@ Policy:
 - [ ] Full-quality run with the Q4_0-quantized models (currently only
       smoke-tested at 512px/4 steps) — same 1280px/30-step + upstream
       parity bar as the f16 baseline, see MADR 0005
-
-### Documentation / upstream
-
-- [ ] Post-MVP (original plan): C ABI + server, trellis2cpp-style
