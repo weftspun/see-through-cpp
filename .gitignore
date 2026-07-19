@@ -16,3 +16,6 @@ gen_reference/*.bin
 /*.log
 verify/.lake/
 scratch_*/
+demo_token_store.bin
+demo_ticket_store.bin
+_index.html

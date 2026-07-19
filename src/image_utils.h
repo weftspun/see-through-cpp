@@ -18,6 +18,7 @@ struct Image {
 };
 
 bool  load_image(const std::string & path, Image & out, int channels = 4);
+bool  load_image_from_memory(const uint8_t * data, size_t len, Image & out, int channels = 4);
 bool  save_image(const std::string & path, const Image & img);
 // PNG-encode in memory (for data: URIs)
 std::vector<uint8_t> encode_png(const Image & img);

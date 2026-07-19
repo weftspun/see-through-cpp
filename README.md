@@ -88,6 +88,12 @@ warning if either is missing, rather than blocking commits.
   >= ~1280^2 — both tracked for upstream, see docs/ggml-upstream-issues.md).
 - Dependencies are vendored as squashed git subtrees (ggml, psd_sdk,
   rapidcheck): update via `git subtree pull --prefix <dir> <url> <ref> --squash`.
+- `third_party/{picoquic,picotls,mbedtls}` (HTTP/3 server, `SEETHROUGH_BUILD_H3_SERVER`)
+  are vendored (plain copy, not subtree-tracked) from
+  `github.com/fire/webtransportd`, `thirdparty/{picoquic,picotls,mbedtls}`,
+  commit `b53faa2d1b94b2d3e3ee7f1591c82d0a7ea2952e`. Licenses: picoquic MIT,
+  picotls MIT, mbedtls Apache-2.0. `third_party/cpp-httplib` (the plain
+  HTTP/1.1 `see-through-server`) is MIT, from `yhirose/cpp-httplib`.
 
 ## GGUF conversion
 

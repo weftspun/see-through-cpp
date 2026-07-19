@@ -11,10 +11,21 @@
 bool load_image(const std::string & path, Image & out, int channels) {
     int w, h, n;
     uint8_t * px = stbi_load(path.c_str(), &w, &h, &n, channels);
-    if (!px) return false;
+    if (!px) { return false; }
     out.w = w; out.h = h; out.c = channels;
     out.data.resize((size_t) w * h * channels);
-    for (size_t i = 0; i < out.data.size(); i++) out.data[i] = px[i] / 255.0f;
+    for (size_t i = 0; i < out.data.size(); i++) { out.data[i] = px[i] / 255.0f; }
+    stbi_image_free(px);
+    return true;
+}
+
+bool load_image_from_memory(const uint8_t * data, size_t len, Image & out, int channels) {
+    int w, h, n;
+    uint8_t * px = stbi_load_from_memory(data, (int) len, &w, &h, &n, channels);
+    if (!px) { return false; }
+    out.w = w; out.h = h; out.c = channels;
+    out.data.resize((size_t) w * h * channels);
+    for (size_t i = 0; i < out.data.size(); i++) { out.data[i] = px[i] / 255.0f; }
     stbi_image_free(px);
     return true;
 }
