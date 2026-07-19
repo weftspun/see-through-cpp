@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 
 // upstream img_alpha_blending (premultiplied=False): sequential "over"
@@ -293,6 +294,24 @@ int main(int argc, char ** argv) {
         }
         return o;
     };
+    // separate PNG layers with the same z order, one file per part
+    if (!png_dir.empty()) {
+        std::filesystem::create_directories(png_dir);
+        int pzi = 0;
+        for (const Part * p : ordered) {
+            std::string safe_tag = p->tag;
+            std::replace(safe_tag.begin(), safe_tag.end(), ' ', '_');
+            char name[32];
+            std::snprintf(name, sizeof(name), "%03d_", pzi);
+            std::string path = png_dir + "/" + name + safe_tag + ".png";
+            std::vector<uint8_t> png = encode_png(p->img);
+            std::ofstream f(path, std::ios::binary);
+            f.write(reinterpret_cast<const char *>(png.data()), (std::streamsize) png.size());
+            pzi++;
+        }
+        printf("wrote %d PNG layers to %s\n", pzi, png_dir.c_str());
+    }
+
     std::ofstream svg(out_path);
     svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" "
         << "xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"" << RES
