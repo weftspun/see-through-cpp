@@ -55,8 +55,9 @@ jobs:
         shell: bash
         run: |
           "$VULKAN_SDK/Bin/glslc.exe" --version
-          echo 'void main() {}' > /tmp/t.comp
+          printf '#version 450\nvoid main() {}\n' > /tmp/t.comp
           "$VULKAN_SDK/Bin/glslc.exe" -fshader-stage=compute --target-env=vulkan1.3 -o /tmp/t.spv /tmp/t.comp
+          echo "glslc sanity check passed"
 
       # Core targets must succeed -- these are the actual product.
       - name: Build core
