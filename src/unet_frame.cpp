@@ -43,11 +43,6 @@ ggml_tensor * attn_tokens(Model & m, ggml_tensor * q_src, ggml_tensor * kv_src,
             kq = ggml_soft_max(ctx, kq);
             ggml_tensor * chunk_kqv = ggml_mul_mat(ctx, v, kq); // (hd, chunk, H, B)
             acc = acc ? ggml_concat(ctx, acc, chunk_kqv, 1) : chunk_kqv;
-            if (getenv("SEETHROUGH_DEBUG_TILEDATTN")) {
-                fprintf(stderr, "[tiledattn] Tk=%lld Tq=%lld H=%d B=%lld chunk=%lld t0=%lld t1=%lld\n",
-                        (long long) Tk, (long long) Tq, n_head, (long long) B,
-                        (long long) chunk, (long long) t0, (long long) t1);
-            }
         }
         kqv = ggml_cont(ctx, ggml_permute(ctx, acc, 0, 2, 1, 3));  // (hd,H,Tq,B)
         kqv = ggml_reshape_3d(ctx, kqv, C, Tq, B);
@@ -138,12 +133,7 @@ ggml_tensor * transformer3d(Model & m, ggml_tensor * x, ggml_tensor * ehs,
         h = basic_transformer_block(m, h, ehs, bpre, n_head);
         if ((l + 1) % stride == 0) {
             const std::string tpre = pre + ".temporal_transformer_blocks." + std::to_string(n_temporal++);
-            // diagnostic bypass for docs/ggml-upstream-issues.md #4: is the
-            // res=1280 all-frames-uniformly-flat collapse caused by
-            // cross-frame mixing specifically?
-            if (!getenv("SEETHROUGH_NO_CROSSFRAME")) {
-                h = ggml_add(ctx, h, cross_frame_block(m, h, tpre, n_head));
-            }
+            h = ggml_add(ctx, h, cross_frame_block(m, h, tpre, n_head));
         }
     }
 

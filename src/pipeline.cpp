@@ -316,11 +316,6 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                                            "time_embedding");
         ggml_tensor * aug = ggml_add(ctx, text, group_embedding(m, text, "group_embeds." + gi));
         emb = ggml_add(ctx, emb, sdxl_add_embed(m, aug, tids));
-        // diagnostic for docs/ggml-upstream-issues.md #4: pinning where in
-        // the main diffusion UNet's forward pass the res=1280 output goes
-        // flat (already ruled out as a vae_decode/unet1024 issue -- the
-        // latent itself is flat before decode ever runs)
-        m.debug_capture = getenv("SEETHROUGH_DEBUG_UNET_STAGES") != nullptr;
         ggml_tensor * out = unet_frame_forward(m, sample, emb, ehs2);
         ggml_set_output(out);
 
@@ -362,85 +357,12 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                        (double) eps[0], mu, sqrt(std::max(0.0, acc2 / lat.size() - mu * mu)));
             }
             if (cfg.verbose) { printf("[layerdiff] step %d/%d (t=%d)\r", s + 1, cfg.steps, sch.timesteps[s]); fflush(stdout); }
-            if (m.debug_capture && s == cfg.steps - 1 && !cfg.debug_dir.empty()) {
-                // graph is built once and reused across steps -- taps only
-                // need reading on the step whose eps feeds the final lat.
-                // sample/emb/ehs2 are batched over all F frames (frame axis
-                // is ne[3]); visualize frame 5 (topwear) same as the latent
-                // dump above, planar WHCN so element (x,y,c,n=5) is at
-                // 5*C*H*W + c*H*W + y*W + x
-                const int fvis = 5;
-                for (const Model::DebugTap & dt : m.debug_taps) {
-                    const int64_t W = dt.ne[0], H = dt.ne[1], C = dt.ne[2];
-                    if (W <= 1 || H <= 1) { continue; }
-                    std::vector<float> v(ggml_nelements(dt.t));
-                    ggml_backend_tensor_get(dt.t, v.data(), 0, v.size() * 4);
-                    std::vector<double> mag((size_t) W * H, 0.0);
-                    for (int64_t c = 0; c < C; c++) {
-                        for (int64_t y = 0; y < H; y++) {
-                            for (int64_t x = 0; x < W; x++) {
-                                mag[(size_t) y * W + x] += fabs(v[(size_t) fvis * C * H * W +
-                                    (size_t) c * H * W + (size_t) y * W + x]);
-                            }
-                        }
-                    }
-                    double vmax = 1e-9;
-                    for (double m2 : mag) { vmax = std::max(vmax, m2); }
-                    Image vis;
-                    vis.w = (int) W; vis.h = (int) H; vis.c = 1;
-                    vis.data.resize(mag.size());
-                    for (size_t i = 0; i < mag.size(); i++) { vis.data[i] = (float) (mag[i] / vmax); }
-                    save_image(cfg.debug_dir + "/ustage_" + dt.name + ".png", vis);
-                }
-            }
         }
         if (cfg.verbose) printf("\n");
         ggml_gallocr_free(alloc);
         ggml_backend_free(backend);
         ggml_free(ctx);
         m.ctx_g = nullptr;
-
-        // diagnostic for docs/ggml-upstream-issues.md #4: is the collapse
-        // already present in the latent (pre-decode), or introduced by
-        // decode? Per-row mean|value| of frame 0's latent, WHC4 layout
-        // (W fastest) -- a collapse concentrated at specific rows here
-        // would point at the UNet itself, not the VAE decode.
-        if (!cfg.debug_dir.empty() && getenv("SEETHROUGH_DEBUG_LATENT")) {
-            // planar WHC layout (ggml ne=[ZR,ZR,4,F], W fastest): element
-            // (x,y,c) of frame 0 is at c*ZR*ZR + y*ZR + x
-            for (int y = 0; y < ZR; y++) {
-                double acc = 0;
-                for (int x = 0; x < ZR; x++)
-                    for (int c = 0; c < 4; c++)
-                        acc += fabs(lat[(size_t) c * ZR * ZR + (size_t) y * ZR + x]);
-                printf("[debug] latent row %3d mean|v|=%.5f\n", y, acc / (ZR * 4));
-            }
-            // channel-collapsed grayscale visualization of every frame's
-            // latent: does the LATENT itself already lack spatial
-            // coherence, or does that only appear once decode runs? Per-row
-            // stats above can't tell scrambled noise from a real shape. All
-            // F frames dumped (not just topwear) to check whether flatness
-            // is universal or specific to certain semantic-tag frames --
-            // would point at cross-frame mixing vs. per-tag conditioning.
-            for (int fvis = 0; fvis < F; fvis++) {
-                std::vector<double> mag((size_t) ZR * ZR, 0.0);
-                for (int c = 0; c < 4; c++) {
-                    for (int y = 0; y < ZR; y++) {
-                        for (int x = 0; x < ZR; x++) {
-                            mag[(size_t) y * ZR + x] += fabs(
-                                lat[(size_t) fvis * DZ + (size_t) c * ZR * ZR + (size_t) y * ZR + x]);
-                        }
-                    }
-                }
-                double vmax = 1e-9;
-                for (double v : mag) { vmax = std::max(vmax, v); }
-                Image vis;
-                vis.w = vis.h = ZR; vis.c = 1;
-                vis.data.resize(mag.size());
-                for (size_t i = 0; i < mag.size(); i++) { vis.data[i] = (float) (mag[i] / vmax); }
-                save_image(cfg.debug_dir + "/latent_frame" + std::to_string(fvis) + ".png", vis);
-            }
-        }
     }
 
     // decode each frame through the TransparentVAE chain
@@ -457,11 +379,6 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
             ggml_tensor * zt = nullptr;
             std::vector<std::vector<float>> outs;
-            // diagnostic for docs/ggml-upstream-issues.md #4: bisect where
-            // in the decode chain (vae_decode / unet1024) the 1280px
-            // collapse first appears -- frame 0 only, to keep output sane
-            mv.debug_capture = f == 5 && getenv("SEETHROUGH_DEBUG_DECODE_STAGES") != nullptr;
-            mv.debug_taps.clear();
             // vae_decode_tiled multiplies node count ~16x at res=1280 (16
             // latent tiles, each running the full decoder) -- generous budget.
             bool ok = run_graph_dev(cfg, mv, 131072,
@@ -469,50 +386,11 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                     zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
                     ggml_tensor * out = trans_vae_decode(mv, zt);
-                    std::vector<ggml_tensor *> outs_t = { out };
-                    for (auto & kv : mv.debug_taps) { outs_t.push_back(kv.t); }
-                    return outs_t;
+                    return std::vector<ggml_tensor *>{ out };
                 },
                 [&]() { ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4); },
                 outs);
             if (!ok) return false;
-            if (mv.debug_capture) {
-                for (size_t t = 0; t < mv.debug_taps.size(); t++) {
-                    const std::vector<float> & v = outs[t + 1];
-                    const Model::DebugTap & dt = mv.debug_taps[t];
-                    double acc = 0, acc2 = 0, amax = 0;
-                    for (float x : v) { acc += x; acc2 += (double) x * x; amax = std::max(amax, (double) fabs(x)); }
-                    double mu = v.empty() ? 0 : acc / v.size();
-                    double sd = v.empty() ? 0 : sqrt(std::max(0.0, acc2 / v.size() - mu * mu));
-                    printf("[debug] decode stage %-20s n=%8zu mean=%.5f std=%.5f max|v|=%.5f\n",
-                           dt.name.c_str(), v.size(), mu, sd, amax);
-                    // per-pixel channel-collapsed grayscale visualization: is
-                    // the spatial content coherent, or scrambled/collapsed
-                    // even when aggregate stats look sane? (planar WHCN --
-                    // W fastest, then H, then C, then N; visualize N=0 only)
-                    if (!cfg.debug_dir.empty() && !v.empty()) {
-                        const int64_t W = dt.ne[0], H = dt.ne[1], C = dt.ne[2];
-                        if (W > 1 && H > 1 && (size_t) (W * H * C) <= v.size()) {
-                            std::vector<double> mag((size_t) W * H, 0.0);
-                            for (int64_t c = 0; c < C; c++) {
-                                for (int64_t y = 0; y < H; y++) {
-                                    for (int64_t x = 0; x < W; x++) {
-                                        mag[(size_t) y * W + x] +=
-                                            fabs(v[(size_t) c * W * H + (size_t) y * W + x]);
-                                    }
-                                }
-                            }
-                            double vmax = 1e-9;
-                            for (double m : mag) { vmax = std::max(vmax, m); }
-                            Image vis;
-                            vis.w = (int) W; vis.h = (int) H; vis.c = 1;
-                            vis.data.resize(mag.size());
-                            for (size_t i = 0; i < mag.size(); i++) { vis.data[i] = (float) (mag[i] / vmax); }
-                            save_image(cfg.debug_dir + "/stage_" + dt.name + ".png", vis);
-                        }
-                    }
-                }
-            }
             // planar RGBA -> interleaved RGBA
             Image & im = layers_out[f];
             im.w = im.h = RES; im.c = 4;

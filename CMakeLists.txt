@@ -74,19 +74,6 @@ foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_enco
     target_link_libraries(${t} PRIVATE seethrough)
 endforeach()
 
-add_executable(probe_flash_bigT tests/probe_flash_bigT.cpp)
-target_link_libraries(probe_flash_bigT PRIVATE seethrough_c)
-target_include_directories(probe_flash_bigT PRIVATE src)
-
-add_executable(probe_attn_block_tiled tests/probe_attn_block_tiled.cpp)
-target_link_libraries(probe_attn_block_tiled PRIVATE seethrough)
-
-add_executable(probe_weight_stats tests/probe_weight_stats.cpp)
-target_link_libraries(probe_weight_stats PRIVATE seethrough)
-
-add_executable(probe_mul_mat_kahan tests/probe_mul_mat_kahan.cpp)
-target_link_libraries(probe_mul_mat_kahan PRIVATE seethrough)
-
 add_executable(psd_layers tests/psd_layers.cpp)
 target_link_libraries(psd_layers PRIVATE Psd)
 target_include_directories(psd_layers PRIVATE src stb)
