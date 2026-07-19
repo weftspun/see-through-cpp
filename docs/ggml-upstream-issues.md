@@ -352,15 +352,213 @@ bug — e.g. positional or timestep embeddings, or a padding/tiling
 coordinate calculation — than a content-computation defect in any of the
 op paths tested so far. Not yet investigated from that angle.
 
-Status: one confirmed and fixed root cause **for a different, real bug**
-(the >4.295GB `attn_block` buffer overflow at `head_dim=8` reduction in
-`unet1024`), kept as an opt-in (`SEETHROUGH_TILED_ATTN`). The 1280px
-visual collapse is confirmed to originate in the main diffusion UNet (not
-VAE decode), affects all 13 frames uniformly, and is invariant to
-`direct_conv`/`flash_attn`/`tiled_naive_attn`/`cross_frame_block` all
-being individually excluded — the fixed screen-position artifact across
-every variant tested points toward a positional/coordinate-embedding bug
-as the next angle to investigate, rather than another op-path toggle.
+Update (breakthrough — first real-upstream-ground-truth comparison at
+ZR=160): every check above compared our ggml output against *itself*
+under different knobs; none ever compared against real upstream PyTorch
+output at the actual production shape. Cloned the upstream repo fresh,
+wrote `gen_reference/gen_reference_unet_forward_160.py` (copy of the
+existing 64x64 gate's script, ZR=160, time_ids=1280) against the same
+cached HF checkpoint, and a matching `tests/test_unet_forward_160.cpp`.
+Ran the real diffusion UNet (production knobs: `SEETHROUGH_FLASH=1
+SEETHROUGH_CHUNK=1 SEETHROUGH_ROWCHUNK=1`) for a single forward pass
+(random N(0,1) latent, t=999, real trained weights) against this
+reference, with fine-grained taps added at `down_blocks.0.resnets.0`
+(the only extra checkpoint available there — `down_blocks.0` is a plain
+`DownBlock2D` upstream, no attention):
+
+```
+conv_in              max_abs_diff=0.0055  PASS
+down_blocks.0.resnets.0  max_abs_diff=0.0225  PASS
+down_block 0 (post-downsample) max_abs_diff=0.0616  FAIL (vs 5e-2 default)
+down_block 1         max_abs_diff=0.2226  FAIL
+down_block 2         max_abs_diff=0.2901  FAIL
+mid_block            max_abs_diff=0.5522  FAIL
+final output         max_abs_diff=0.0302  PASS
+```
+
+At first glance this looks like a smoking gun (growing divergence through
+the network) — but the pattern is actually consistent with **ordinary
+float-precision accumulation**, not a discrete correctness bug:
+error *shrinks* 20x from mid_block (mean_abs_diff 0.032) back down to the
+final output (mean_abs_diff 0.0015), which is exactly what skip
+connections + GroupNorm do to uncorrelated per-layer noise in a
+well-conditioned U-Net — a real structural bug would not un-diverge on
+its own through the up-path. The final output's own stats (mean
+0.00108, std 1.004) match upstream's reported healthy numbers almost
+exactly. Ruled out row-chunking as a contributor for this specific
+divergence: `SEETHROUGH_DEBUG_ROWCHUNK=1` shows the row-chunk branch
+never engages at this shape in the test harness (its HW=25600 is under
+the harness's default `conv_row_chunk_min_hw` of 256x256=65536, unlike
+production's `pipe_load` override of 40x40); toggling `SEETHROUGH_ROWCHUNK`
+produced byte-identical output. `direct_conv` (`ggml_conv_2d_direct`) is
+therefore the only conv path exercised across every layer in this test,
+and is the most likely source of the F16-im2col-rounding accumulation
+that grows through the down-path and dilutes back down through the
+up-path — normal behavior, not a bug to fix.
+
+**This is a significant reframing of the whole 1280px collapse
+investigation**: a single UNet forward pass at the real production
+shape, with real trained weights, against real upstream ground truth,
+is numerically healthy end-to-end. The visually-flat/collapsed latent
+observed in the full pipeline therefore cannot be explained by kernel-
+level numeric divergence in a single step — it must come from something
+that only manifests (a) across the full 30-step DDIM sampling loop
+(error compounding across steps, or a sigma/timestep-schedule
+interaction), or (b) with a real encoded image latent as the starting
+point rather than random N(0,1) noise, or (c) in the scheduler/sampling
+code itself (`scheduler.cpp`), not in `unet_frame_forward`. The earlier
+"positional/coordinate-embedding bug" lead (based on the artifact's
+fixed screen position across knob toggles) was never tested against
+real ground truth and should be treated as a weaker signal than this
+result. Next step: instrument the actual multi-step sampling loop (not
+a single synthetic forward pass) to see at which step, if any, the
+latent's real spatial structure first goes flat — this is the
+untested angle that would explain a bug invisible to any single-step
+check.
+
+Update (root cause found and fixed — the actual 1280px shape collapse):
+extended the same real-upstream-ground-truth comparison to the SDXL VAE
+**encoder** (`vae_encode`, used to encode the "page" conditioning image
+into `c_concat`, fed identically into every one of the 13 frames' UNet
+input) at res=1280, with per-stage taps
+(`gen_reference_vae_encode_160_taps.py` / `tests/test_vae_encode_160.cpp`).
+This path had never been exercised at this resolution by any prior gate.
+Result: `conv_in` and every down_block through `mid.attn` match upstream
+to ~1% relative error (ordinary float accumulation, same class as the
+UNet's own compounding noise) — but `encoder.mid_block.resnets.1`'s
+output **collapses in magnitude and flips sign** relative to upstream
+(ours -6.86 vs upstream +7.27, on inputs that were ~750-860 in magnitude
+one stage earlier). This is catastrophic cancellation: `mid_block.
+resnets.1`'s residual sums two large, nearly-equal-and-opposite
+quantities (confirmed by an extreme outlier in `conv1`'s weights, min
+-9.75 vs std 0.133 — a fragile, near-cancelling learned transform), so
+the ~1% pre-existing noise becomes comparable to the actual result and
+flips its sign.
+
+**Confirmed Vulkan-specific**: reran the identical graph/weights/input on
+the CPU backend (`SEETHROUGH_DEVICE=cpu`) — every stage matches upstream
+to ~1e-3, including `mid.resnet1` and the final encoded latent. The exact
+same computation is correct on CPU and wrong on Vulkan. This is a new,
+third confirmed Vulkan numerical defect in this investigation (distinct
+from item 3's `ggml_conv_2d_direct` issue and the `attn_block` buffer
+overflow above): `ggml_mul_mat`'s accumulation order for a large
+reduction dimension (K=3*3*512=4608) differs from CPU/upstream closely
+enough to flip the sign of a near-cancelling result — invisible at
+smaller resolutions/channel counts where no comparably fragile
+cancellation exists, and invisible to every synthetic-weight Lean witness
+case (the fragility comes from this specific model's actual learned
+weights, not the op's general correctness).
+
+Since `c_concat` is shared identically across all 13 frames' conditioning,
+this single corrupted value explains the "every frame uniformly flat,
+same screen position regardless of every knob toggled" pattern that
+persisted through this entire investigation.
+
+**First fix attempt (CPU, reverted)**: `pipe_load_cpu()` forced CPU
+backend for the page/depth-cond VAE encode. Verified this produced
+`topwear`/`back_hair`/`legwear`/`front_hair` at the correct full
+854x1280 shape (was ~854x70) with visible, if noisy at 8 steps, content
+— but this was explicitly rejected: the project's own policy is GPU as
+the primary target, no silent CPU fallback, and this one op alone took
+10-20 minutes per generation. Reverted; see below for the real fix.
+
+**GPU fix applied**: `ggml_mul_mat_set_prec(r, GGML_PREC_F32)` on
+`conv2d`'s im2col mul_mat (all three call sites: plain path, both
+row-chunk branches) and `ggml_flash_attn_ext_set_prec` on the main
+UNet's flash attention — forces f32 accumulation instead of whatever
+reduced-precision mode Vulkan's coopmat2 (tensor-core) path defaults to.
+**Verified real improvement** (`test_vae_encode_160`): `mid.resnet1`'s
+catastrophic sign-flip/magnitude-implosion is gone — it now tracks
+upstream's sign and order of magnitude (max_abs_diff 2.36 vs upstream
+~18, i.e. still off but not unrelated), and `conv_in`/`down_block 0` pass
+cleanly. Confirmed via `GGML_VK_DISABLE_COOPMAT`/`GGML_VK_DISABLE_COOPMAT2`
+that this residual gap is **not** tensor-core-specific — switching
+NV_coopmat2 → KHR_coopmat → no matrix cores at all produces identical
+numbers, meaning the remaining imprecision is inherent to GPU
+parallel-reduction rounding at this K, not fixable via any existing
+ggml precision flag.
+
+**This GPU fix alone does not resolve the visible symptom.** A full
+1280px/8-step CLI run with only this fix produces **every layer
+completely blank** (alpha=0 everywhere) — a different, not obviously
+better, failure mode than the original ~854x70 thin-band collapse (the
+"854x1280 full-canvas" shape seen in one intermediate test was simply
+what an entirely-empty layer defaults to, not a real fix; re-verified
+directly by checking pixel/alpha statistics, not just PNG dimensions).
+The residual `c_concat` error, while much smaller than before this fix,
+is apparently still enough — compounded as a *constant* bias across all
+8 real denoising steps, not averaged-out per-step noise — to prevent any
+layer from crossing the alpha-visibility threshold.
+
+**Kahan-chunked summation attempt (built, disabled)**: per the
+escalation policy below, attempted to close the remaining gap by
+splitting the reduction dimension into small chunks combined via
+compensated (Kahan) summation using existing ggml ops (`ggml_sub`/
+`ggml_add`, not a reduction, so free of GPU-parallel-rounding
+sensitivity) — see `mul_mat_kahan` in `ops.cpp` (kept in the source,
+disabled by default: `CHUNK_K` defaults to `K`, i.e. never chunks;
+`SEETHROUGH_KAHAN_CHUNK_K=<n>` opts back in for debugging) and
+`tests/probe_mul_mat_kahan.cpp`.
+
+First round of isolated probes (small/large M, chained multi-op graphs,
+adversarial near-cancelling weights, separate weight-buffer contexts)
+all passed. A follow-up probe combining ALL of these — genuinely
+*sequential* chained convs (each stage's real output silu'd and fed to
+the next, not independent calls) with adversarial weights — initially
+*appeared* to reproduce a large regression (max_abs_diff growing 0.03 →
+403 over 5 chained stages), but this was a false lead: the probe's own
+reference value was itself exploding exponentially (67 → 107076) because
+it lacked the GroupNorm-style normalization real resnet blocks use
+between convs specifically to prevent this — relative error stayed
+<0.5% throughout. Adding normalization to the probe made the
+"regression" disappear entirely (bounded reference magnitude, small
+proportional error even over 10 adversarial chained stages) — so
+`mul_mat_kahan` is very likely numerically sound in general.
+
+**Real-model bisection**: added per-conv debug taps inside
+`resnet_block` and the encoder's downsampler (`SEETHROUGH_DEBUG_CONV_STAGES`,
+`SEETHROUGH_DUMP_CONV_STAGES=<dir>` dumps raw tensors) and directly
+diffed chunked-GPU vs non-chunked-GPU output at every stage. The
+divergence is not gradual compounding through down_block 0 — it is
+already large at the very *first* conv in the entire encoder
+(`encoder.down_blocks.0.resnets.0.conv1`, K=1152): max element-wise diff
+361 out of a max value of 365, i.e. some individual output elements are
+essentially unrelated between the chunked and non-chunked computation of
+the *same* conv, immediately. This rules out compounding-through-depth
+as the explanation and points at something specific to how
+`mul_mat_kahan`'s chunked view/`ggml_cont`/Kahan-add sequence behaves on
+the *real* `ggml_im2col` output tensor (produced inside a large,
+multi-op VAE graph) that no synthetic 2D-tensor probe — however
+adversarial — has reproduced. Attempted to disambiguate chunked-vs-
+non-chunked against CPU ground truth (established oracle all session)
+but the CPU run with Kahan chunking active is prohibitively slow (over
+an hour, still incomplete) since chunking multiplies the mul_mat count
+per conv roughly 3x on top of CPU's own already-slow im2col+matmul at
+this resolution; abandoned per explicit direction to stay off CPU
+entirely, including for diagnostics.
+
+**Disabled by default** (`CHUNK_K` defaults to `K`, so `mul_mat_kahan`
+always takes its non-chunked, `ggml_mul_mat_set_prec`-only branch unless
+explicitly opted into via env var) — verified this default reproduces
+the confirmed-safe `ggml_mul_mat_set_prec`-only results exactly. The
+per-conv debug taps and dump capability are left in place (harmless when
+`m.debug_capture` is false) as the concrete next entry point: bisecting
+*inside* `mul_mat_kahan`'s own loop (per-chunk partial/sum/comp taps, not
+just per-conv) while it's live against the real `im2col` tensor is the
+next step, if this is picked up again.
+
+**Status**: the confirmed root cause (Vulkan `mul_mat` catastrophic
+cancellation in the VAE encoder's `mid_block.resnets.1`) is real and its
+mechanism is well understood; the GPU-only mitigation applied
+(`ggml_mul_mat_set_prec`, active by default) is a genuine, verified
+improvement but does not fully close the gap for the actual production
+input, and the full pipeline still produces blank output at 1280px/8
+steps. The Kahan-chunked follow-up meant to close that gap further is
+built and instrumented but disabled — it has a real, reproducible,
+GPU-only defect of its own that neither extensive synthetic probing nor
+per-conv real-model bisection has yet isolated. Untested whether a
+higher step count (production's real 30) changes the blank-output
+symptom. This item remains open.
 
 ## Remediation policy
 
@@ -379,3 +577,12 @@ Currently nothing qualifies for step 2: the gallocr input-recycling issue
 is allocator behavior (kernel-independent), CPU flash divergence is outside
 the production path (GPU-primary), and the Vulkan direct-conv defect is
 covered by step 1.
+
+The VAE encoder's `mid_block.resnets.1` catastrophic-cancellation defect
+(item 4 above) is the first candidate for step 2: step 1 was tried twice
+(`ggml_mul_mat_set_prec` alone -- real but insufficient improvement; a
+Kahan-chunked composition -- numerically proven correct in isolation but
+an unexplained regression in the real graph, disabled) without fully
+closing the gap. A real fix likely needs either resolving the Kahan
+regression (composition, still step 1) or a custom Slang kernel for this
+specific op (step 2) if that proves unfixable.

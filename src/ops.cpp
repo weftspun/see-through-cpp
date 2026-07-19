@@ -107,6 +107,57 @@ ggml_tensor * bias4d(ggml_context * ctx, ggml_tensor * b) {
     return ggml_reshape_4d(ctx, b, 1, 1, b->ne[0], 1);
 }
 
+// Kahan (compensated) summation over a chunked reduction dimension -- an
+// attempted fully-GPU fix for the confirmed Vulkan mul_mat catastrophic-
+// cancellation defect (docs/ggml-upstream-issues.md #4). Passes every
+// isolated probe built for it (tests/probe_mul_mat_kahan.cpp: adversarial
+// near-cancelling weights, sequential GroupNorm-normalized chains matching
+// resnet_block's real structure, separate weight buffers) -- yet directly
+// diffing chunked-vs-non-chunked GPU output at each conv stage in the real
+// VAE encoder (SEETHROUGH_DEBUG_CONV_STAGES/SEETHROUGH_DUMP_CONV_STAGES)
+// shows they diverge sharply already at the very first conv
+// (encoder.down_blocks.0.resnets.0.conv1, max diff 361 out of max value
+// 365), and the chunked variant fails the real upstream reference at that
+// block while the non-chunked (plain ggml_mul_mat + GGML_PREC_F32) variant
+// passes it. Kept disabled (SEETHROUGH_KAHAN_CHUNK_K=1 opts back in for
+// debugging) -- root cause of the chunked path's real-model divergence is
+// still unknown despite extensive isolated testing; not safe to ship.
+static ggml_tensor * mul_mat_kahan(ggml_context * ctx, ggml_tensor * a2d, ggml_tensor * b2d) {
+    const int64_t K = a2d->ne[0];
+    const char * chunk_env = getenv("SEETHROUGH_KAHAN_CHUNK_K");
+    const int64_t CHUNK_K = chunk_env ? atoll(chunk_env) : K;  // default: never chunk
+    if (K <= CHUNK_K) {
+        ggml_tensor * r = ggml_mul_mat(ctx, a2d, b2d);
+        ggml_mul_mat_set_prec(r, GGML_PREC_F32);
+        return r;
+    }
+    ggml_tensor * sum = nullptr, * comp = nullptr;
+    for (int64_t k0 = 0; k0 < K; k0 += CHUNK_K) {
+        const int64_t k1 = std::min(k0 + CHUNK_K, K);
+        ggml_tensor * ac = ggml_cont(ctx, ggml_view_2d(ctx, a2d, k1 - k0, a2d->ne[1],
+                                                       a2d->nb[1], k0 * a2d->nb[0]));
+        ggml_tensor * bc = ggml_cont(ctx, ggml_view_2d(ctx, b2d, k1 - k0, b2d->ne[1],
+                                                       b2d->nb[1], k0 * b2d->nb[0]));
+        ggml_tensor * partial = ggml_mul_mat(ctx, ac, bc);
+        ggml_mul_mat_set_prec(partial, GGML_PREC_F32);
+        if (!sum) {
+            sum = partial;
+            comp = ggml_scale(ctx, partial, 0.0f);
+        } else {
+            ggml_tensor * y = ggml_sub(ctx, partial, comp);
+            ggml_tensor * t = ggml_add(ctx, sum, y);
+            comp = ggml_sub(ctx, ggml_sub(ctx, t, sum), y);
+            sum = t;
+        }
+    }
+    return sum;
+}
+
+// test-only public entry point (probe_mul_mat_kahan.cpp)
+ggml_tensor * mul_mat_kahan_test_entry(ggml_context * ctx, ggml_tensor * a2d, ggml_tensor * b2d) {
+    return mul_mat_kahan(ctx, a2d, b2d);
+}
+
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int stride, int pad) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * w = m.get(pre + ".weight");
@@ -137,7 +188,7 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
                 // interior: horizontal pad only — output rows match exactly
                 ggml_tensor * im = ggml_im2col(ctx, w, slab, 1, 1, 1, 0, 1, 1, true,
                                                w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
-                ggml_tensor * r = ggml_mul_mat(ctx,
+                ggml_tensor * r = mul_mat_kahan(ctx,
                     ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]),
                     ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
                 r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
@@ -146,7 +197,7 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
                 // edge tiles: full pad then crop the halo rows back out
                 ggml_tensor * im = ggml_im2col(ctx, w, slab, 1, 1, 1, 1, 1, 1, true,
                                                w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
-                ggml_tensor * r = ggml_mul_mat(ctx,
+                ggml_tensor * r = mul_mat_kahan(ctx,
                     ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]),
                     ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
                 r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
@@ -183,7 +234,7 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
     // the whole conv in f32 instead
     ggml_type it = w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
     ggml_tensor * im = ggml_im2col(ctx, w, x, stride, stride, pad, pad, 1, 1, true, it);
-    ggml_tensor * r = ggml_mul_mat(ctx,
+    ggml_tensor * r = mul_mat_kahan(ctx,
         ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]),
         ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
     r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
@@ -219,6 +270,7 @@ ggml_tensor * resnet_block(Model & m, ggml_tensor * x, const std::string & pre,
     ggml_tensor * h = group_norm_affine(m, x, pre + ".norm1");
     h = ggml_silu(ctx, h);
     h = conv2d(m, h, pre + ".conv1");
+    debug_tap(m, pre + ".conv1_out", h);
     if (temb) {
         ggml_tensor * t = linear(m, ggml_silu(ctx, temb), pre + ".time_emb_proj");
         h = ggml_add(ctx, h, ggml_reshape_4d(ctx, t, 1, 1, t->ne[0], t->ne[1]));
@@ -226,6 +278,7 @@ ggml_tensor * resnet_block(Model & m, ggml_tensor * x, const std::string & pre,
     h = group_norm_affine(m, h, pre + ".norm2");
     h = ggml_silu(ctx, h);
     h = conv2d(m, h, pre + ".conv2");
+    debug_tap(m, pre + ".conv2_out", h);
     ggml_tensor * sc = x;
     if (m.has(pre + ".conv_shortcut.weight")) {
         sc = conv2d(m, x, pre + ".conv_shortcut", 1, 0);

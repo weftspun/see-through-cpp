@@ -43,9 +43,9 @@ int main(int argc, char ** argv) {
             amin = std::min(amin, (double) x); amax = std::max(amax, (double) x);
         }
         double mu = sum / n, sd = sqrt(std::max(0.0, sum2 / n - mu * mu));
-        printf("%-60s ne=(%lld,%lld,%lld,%lld) mean=%.6f std=%.6f min=%.6f max=%.6f nan=%d inf=%d\n",
+        printf("%-60s ne=(%lld,%lld,%lld,%lld) type=%d mean=%.6f std=%.6f min=%.6f max=%.6f nan=%d inf=%d\n",
                argv[i], (long long) t->ne[0], (long long) t->ne[1], (long long) t->ne[2],
-               (long long) t->ne[3], mu, sd, amin, amax, nnan, ninf);
+               (long long) t->ne[3], t->type, mu, sd, amin, amax, nnan, ninf);
     }
     return 0;
 }

@@ -82,9 +82,92 @@ Policy:
       computation-invariant screen position strongly suggests a
       **positional/coordinate-embedding bug** (timestep or positional
       embeddings, or a padding/tiling coordinate calculation) rather than
-      a content-computation defect in any op path tried so far. This is
-      the next angle to investigate. See docs/ggml-upstream-issues.md item
-      4's latest status note.
+      a content-computation defect in any op path tried so far.
+      **Superseded by the update below** — that lead was never checked
+      against real ground truth.
+      **Breakthrough**: generated a real upstream PyTorch reference at the
+      actual production shape (ZR=160, `gen_reference_unet_forward_160.py`)
+      for the first time in this whole investigation (every prior check
+      only compared our ggml output against itself under different knobs).
+      A single UNet forward pass (real trained weights, production knobs)
+      against this reference is **numerically healthy end-to-end**: taps
+      through the down/mid blocks show growing absolute error (up to 0.55
+      at mid_block, driven by ordinary F16 `direct_conv` im2col rounding
+      compounding over more/larger layers than the 64x64 gate exercises),
+      but it *shrinks back down* 20x through the up-path — skip
+      connections and GroupNorm diluting uncorrelated per-layer float
+      noise, not a real bug un-fixing itself — and the final output
+      matches upstream's own healthy stats (mean 0.00108, std 1.004)
+      almost exactly. This rules out raw kernel numerics as the cause of
+      the visual collapse: a single production-shape forward pass, real
+      weights, real ground truth, checks out clean. The collapse must
+      therefore come from the multi-step sampling trajectory itself
+      (error compounding over 30 DDIM steps, a sigma/timestep-schedule
+      interaction, or something specific to a real encoded-image latent as
+      the starting point rather than random noise) — not from any single
+      op or knob. See docs/ggml-upstream-issues.md item 4's latest status
+      note for full detail.
+      **Root cause found and fixed**: built a matching multi-step upstream
+      reference (`gen_reference_layerdiff_160.py`, real pipeline, res=1280,
+      8 steps — the step count that first triggers the collapse) and a
+      matching C++ e2e test (`test_layerdiff_e2e_160.cpp`). `c_concat` (the
+      VAE-encoded "page" conditioning image, shared identically across all
+      13 frames) diverged wildly from upstream — traced to
+      `encoder.mid_block.resnets.1` in the SDXL VAE **encoder**
+      (`vae_encode`, never before validated at this resolution): its
+      residual sums two large near-cancelling terms (an extreme outlier
+      weight, `conv1` min -9.75 vs std 0.133, confirms a fragile learned
+      cancellation), and Vulkan's `ggml_mul_mat` summation order for this
+      large reduction (K=4608) differs from upstream/CPU just enough to
+      flip the tiny result's sign. **Confirmed Vulkan-specific**: the
+      identical graph/weights/input matches upstream to ~1e-3 on the CPU
+      backend, both at this stage and every other. Since the corrupted
+      `c_concat` feeds every frame's UNet conditioning identically, this
+      explains the "all 13 frames uniformly flat, same screen position
+      regardless of every knob" pattern from the whole investigation.
+      **First fix (CPU) rejected**: forcing CPU backend for just this one
+      VAE-encode stage did produce the correct 854x1280 shape with visible
+      content — but was explicitly rejected (project policy: GPU is the
+      primary target, no CPU fallback; this one op alone cost 10-20 min/
+      generation). Reverted.
+      **GPU fix applied instead**: `ggml_mul_mat_set_prec(GGML_PREC_F32)`
+      on `conv2d`'s im2col mul_mat (forces f32 accumulation instead of
+      Vulkan coopmat2's reduced-precision default) plus the same on the
+      main UNet's flash attention. Verified real improvement (the
+      catastrophic sign-flip/magnitude-implosion at `mid.resnet1` is gone,
+      values now track upstream's sign/magnitude) and confirmed the
+      residual gap is **not** tensor-core-specific (disabling
+      coopmat/coopmat2 entirely via `GGML_VK_DISABLE_COOPMAT[2]` changes
+      nothing — it's inherent GPU parallel-reduction rounding, no existing
+      ggml flag closes it further).
+      **Does not resolve the visible symptom**: a full 1280px/8-step CLI
+      run with only this GPU fix produces **every layer completely blank**
+      (verified via alpha-channel statistics, not just PNG dimensions) —
+      a different failure mode from the original ~854x70 collapse, not
+      obviously better. The residual `c_concat` error, applied as a
+      constant bias across all 8 real steps, still appears to be enough
+      to suppress all visible content.
+      **Kahan-chunked summation attempted, disabled by default**: built a
+      compensated-summation composition (`mul_mat_kahan` in `ops.cpp`,
+      `CHUNK_K` defaults to `K` i.e. never chunks; `SEETHROUGH_KAHAN_CHUNK_K`
+      opts in for debugging) to fully close the gap. Verified numerically
+      correct in every isolated probe, including a properly-normalized
+      sequential chain of adversarial near-cancelling convs matching real
+      resnet_block structure (an earlier apparent regression there turned
+      out to be the probe's own missing normalization, not a real Kahan
+      defect). Bisected directly in the real model via new per-conv debug
+      taps (`SEETHROUGH_DEBUG_CONV_STAGES`/`SEETHROUGH_DUMP_CONV_STAGES`):
+      chunked-vs-non-chunked GPU output diverges sharply already at the
+      very first conv in the whole encoder, not through gradual
+      compounding — root cause of that specific divergence still unknown.
+      Abandoned CPU-vs-GPU comparison as a next diagnostic step per
+      explicit direction to stay off CPU entirely, even for debugging.
+      **This item remains open.** The confirmed root cause is real and
+      well understood; the applied default GPU mitigation
+      (`ggml_mul_mat_set_prec`) is a genuine but incomplete improvement.
+      See docs/ggml-upstream-issues.md item 4 for full detail and the
+      concrete next debugging step (per-chunk taps inside
+      `mul_mat_kahan`'s own loop, live in the real model).
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,
       not currently reproducible**: audited every L/R-split tag

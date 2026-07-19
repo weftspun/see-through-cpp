@@ -59,6 +59,7 @@ ggml_tensor * attn_tokens(Model & m, ggml_tensor * q_src, ggml_tensor * kv_src,
         v = ggml_cast(ctx, ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, Tk, B), 0, 2, 1, 3)), GGML_TYPE_F16);
         ggml_tensor * fa = ggml_flash_attn_ext(ctx, q, k, v, nullptr,
                                                1.0f / sqrtf((float) hd), 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_prec(fa, GGML_PREC_F32);
         kqv = ggml_reshape_3d(ctx, fa, C, Tq, B);
     } else {
         q = ggml_scale(ctx, q, 1.0f / sqrtf((float) hd));
@@ -182,7 +183,8 @@ static ggml_tensor * maybe_t3d(Model & m, ggml_tensor * x, ggml_tensor * ehs,
 
 ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * emb,
                                  ggml_tensor * ehs,
-                                 std::vector<ggml_tensor *> * taps) {
+                                 std::vector<ggml_tensor *> * taps,
+                                 bool fine_taps_down0) {
     ggml_context * ctx = m.ctx_g;
     m.gn_groups = 32; m.gn_eps = 1e-5f;
 
@@ -201,6 +203,7 @@ ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * 
             sample = resnet_block(m, sample, pre, emb);
             snprintf(tapname, sizeof(tapname), "unet.down%d.resnet%d", i, r);
             debug_tap(m, tapname, sample);
+            if (taps && fine_taps_down0 && i == 0 && r == 0) { taps->push_back(sample); }
             snprintf(pre, sizeof(pre), "down_blocks.%d.attentions.%d", i, r);
             sample = maybe_t3d(m, sample, ehs, pre);
             snprintf(tapname, sizeof(tapname), "unet.down%d.attn%d", i, r);

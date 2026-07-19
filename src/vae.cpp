@@ -2,11 +2,12 @@
 
 #include <cstdio>
 
-ggml_tensor * vae_encode(Model & m, ggml_tensor * x) {
+ggml_tensor * vae_encode(Model & m, ggml_tensor * x, std::vector<ggml_tensor *> * taps) {
     ggml_context * ctx = m.ctx_g;
     m.gn_groups = 32; m.gn_eps = 1e-6f; m.head_dim = 0;
 
     ggml_tensor * sample = conv2d(m, x, "encoder.conv_in");
+    if (taps) { taps->push_back(sample); }
 
     for (int i = 0; i < 4; i++) {
         char pre[64];
@@ -19,12 +20,17 @@ ggml_tensor * vae_encode(Model & m, ggml_tensor * x) {
             // diffusers Downsample2D pads (0,1,0,1) then convs stride 2 pad 0
             sample = ggml_pad(ctx, sample, 1, 1, 0, 0);
             sample = conv2d(m, sample, pre, 2, 0);
+            debug_tap(m, std::string(pre) + "_out", sample);
         }
+        if (taps) { taps->push_back(sample); }
     }
 
     sample = resnet_block(m, sample, "encoder.mid_block.resnets.0");
+    if (taps) { taps->push_back(sample); }
     sample = attn_block(m, sample, "encoder.mid_block.attentions.0");
+    if (taps) { taps->push_back(sample); }
     sample = resnet_block(m, sample, "encoder.mid_block.resnets.1");
+    if (taps) { taps->push_back(sample); }
 
     sample = group_norm_affine(m, sample, "encoder.conv_norm_out");
     sample = ggml_silu(ctx, sample);

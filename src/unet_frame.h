@@ -48,6 +48,13 @@ ggml_tensor * sdxl_add_embed(Model & m, ggml_tensor * text_embeds, ggml_tensor *
 // (block/attention/layer counts, head count = C/64). GN32, norm_eps 1e-5.
 // `taps` (optional) receives intermediate activations for validation:
 // conv_in, each down block output, mid block output.
+// `fine_taps_down0`: when true and `taps` is non-null, also pushes the
+// down_blocks.0 resnets.0 output just before the normal down_blocks.0
+// (post-downsampler) tap -- down_blocks.0 has no attention (plain
+// DownBlock2D upstream), so this is the only extra checkpoint available
+// there. For bisecting exactly where within the first down block a
+// divergence from upstream starts.
 ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * emb,
                                  ggml_tensor * ehs,
-                                 std::vector<ggml_tensor *> * taps = nullptr);
+                                 std::vector<ggml_tensor *> * taps = nullptr,
+                                 bool fine_taps_down0 = false);
