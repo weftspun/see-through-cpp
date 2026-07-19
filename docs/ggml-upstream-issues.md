@@ -122,10 +122,49 @@ CPU-only flash divergence, which looked exactly like a new defect until the
 device was checked. The probe now refuses to run at all if `st_device()`
 reports CPU.)
 
-Status: paused. Both resolution-scaling UNet knobs have been checked as
-thoroughly as a simple enable/disable toggle allows; neither confirms nor
-excludes `flash_attn`, and `direct_conv` is excluded. Root cause of the
-1280px collapse remains open.
+Update: `flash_attn` is now **ruled out**, decisively. Built a query-tiled
+naive-attention path (`Model.tiled_naive_attn`, `attn_tokens` in
+`unet_frame.cpp`) that computes the exact same `softmax(QK^T)V` as the
+plain naive branch but chunked over Tq, keeping the kq intermediate
+VRAM-bounded regardless of T — this is what makes it possible to actually
+run *without* flash_attn at 1280px production token counts, where a plain
+`flash_attn=false` toggle OOMs. New Lean witness cases (`tiled-*`) confirm
+it's mathematically exact against the naive reference at every gated shape
+(interval 0.0). Running the full 1280px CLI with `SEETHROUGH_TILED_ATTN=1`
+in place of `flash_attn` produces the **identical** collapse (`topwear`
+still 854x70). Since this path is proven exact and VRAM-safe at production
+scale, this rules out `flash_attn` (and attention generally, in the sense
+of "wrong kernel math") as the cause — not just "untested", but actually
+excluded now.
+
+Update: examined the raw pre-crop decode output directly (`--debug-dir`'s
+`raw_topwear_full.png` and the per-frame `frame_N.png` dumps) rather than
+only the post-crop semantic layer. Two findings redirect the search:
+
+1. The collapse is already present in the **raw, uncropped, full-canvas**
+   layer — `crop_part`'s bounding-box tightening (`src/postproc.cpp`) is
+   not the cause; whatever's wrong happens upstream of it, in the decode
+   itself.
+2. `frame_0.png` and `frame_5.png` (different semantic tags/frames in the
+   13-frame batch) show the **same** blocky, checkerboard-like artifact in
+   the same screen position — a repeating pattern along the top and right
+   edges, not smooth numerical noise or content-dependent corruption. The
+   same shape appearing regardless of tag strongly suggests a structural
+   bug shared across all frames — e.g. an indexing/tiling bug in the
+   decode-stage row-chunk assembly or the multi-frame batch layout — rather
+   than a per-content attention or conditioning problem.
+
+This points the search at the VAE decode's row-chunked im2col *assembly*
+(the tile-accumulation/frame-layout logic in `ops.cpp`'s `conv2d`, not the
+underlying `ggml_im2col`/`ggml_mul_mat` kernels, which are still covered by
+the `decode-rowchunk-1280-64` Lean case) as the next suspect, rather than
+any attention knob. Not yet investigated further.
+
+Status: paused, but narrowed. `direct_conv` and `flash_attn` are both
+excluded (the latter decisively, via an exact VRAM-safe substitute, not
+just an untested toggle). Root cause is upstream of per-layer cropping, in
+the shared decode/frame-layout stage, evidenced by an identical artifact
+shape across different semantic tags.
 
 ## Remediation policy
 

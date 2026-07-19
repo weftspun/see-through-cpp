@@ -45,15 +45,18 @@ Policy:
 
 - [ ] **Fix the 1280px collapse** (see MADR 0007 for diagnostics completed
       so far — this single bug also causes the blank-face/missing-ears
-      symptom, not a separate "content-quality" bug): `direct_conv` is
-      excluded; `flash_attn` is the only remaining resolution-scaling UNet
-      knob, but disabling it to test in isolation OOMs (~21.3GB single
-      alloc, no VRAM headroom for naive attention at production
-      batch/token counts), and multi-seed synthetic-weight probing found
-      no divergence either. Paused pending either a Lean witness case
-      backed by the real loaded checkpoint (not synthetic weights) or a
-      VRAM-safe composed replacement for naive attention at this scale —
-      see docs/ggml-upstream-issues.md item 4's "Status: paused" note.
+      symptom, not a separate "content-quality" bug): `direct_conv` and now
+      `flash_attn` are both **excluded** — a query-tiled naive-attention
+      substitute (`tests/probe_flash_bigT.cpp`-adjacent work,
+      `Model.tiled_naive_attn`, proven exact via Lean `tiled-*` cases and
+      VRAM-safe at production scale) produces the identical collapse when
+      swapped in for flash_attn. Redirected: the raw pre-crop decode
+      output is already collapsed (rules out `crop_part`/postprocessing),
+      and different semantic tags/frames show the *same* blocky artifact
+      in the same position — points at the decode-stage row-chunk
+      tile-assembly/frame-layout logic (`ops.cpp`'s `conv2d`), not
+      attention or per-tag content. See docs/ggml-upstream-issues.md item
+      4's updated "Status: paused, but narrowed" note.
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning
 - [ ] Upstream parity: match our SVG's per-tag layers against upstream's
