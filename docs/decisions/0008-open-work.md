@@ -99,11 +99,16 @@ Policy:
       speculative code changes without a visible symptom aren't worth it.
 - [ ] Upstream parity: match our SVG's per-tag layers against upstream's
       output by tag name and compare alpha masks (>0.98 IoU where tags
-      match) + depth ordering. Decided against comparing against upstream's
-      PSD (no PSD reader in our C++, and we don't want a Python dev-tool
-      dependency for this) — needs a C++ tool using ThorVG to parse SVG,
-      and a non-PSD upstream reference to compare against (open: what that
-      reference format is, since upstream only emits PSD).
+      match) + depth ordering. Reversed the earlier ThorVG-vs-PSD-reader
+      decision: our own SVG needs no parser dependency to read back (it's
+      our own flat, documented format); the actual blocker was reading
+      *upstream's* PSD output. Vendored `psd_sdk` (MolecularMatters) as a
+      git subtree and added `tests/psd_layers.cpp`, which reads a PSD and
+      writes one PNG per layer (RGBA, expanded to full canvas) — the
+      reader half is done. Not yet validated against a real upstream PSD
+      (none available locally — need to run upstream once to generate
+      one) and the actual IoU-comparison step (match by tag name, compute
+      per-tag alpha-mask IoU) isn't written yet.
 - [ ] Full-quality run with the Q4_0-quantized models (currently only
       smoke-tested at 512px/4 steps) — same 1280px/30-step + upstream
       parity bar as the f16 baseline, see MADR 0005
