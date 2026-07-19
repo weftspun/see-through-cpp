@@ -101,9 +101,6 @@ RenderPathCtx * g_render_ctx = nullptr;
 int render_path_callback(picoquic_cnx_t * cnx, uint8_t * bytes, size_t length,
                          picohttp_call_back_event_t event,
                          h3zero_stream_ctx_t * stream_ctx, void * /*path_app_ctx*/) {
-    fprintf(stderr, "[render_path_callback] event=%d length=%zu stream_ctx=%p\n",
-            (int) event, length, (void *) stream_ctx);
-    fflush(stderr);
     auto * pctx = g_render_ctx;
     switch (event) {
     case picohttp_callback_post: {
@@ -188,17 +185,23 @@ int main(int argc, char ** argv) {
     server_params.path_table = path_table;
     server_params.path_table_nb = 1;
 
-    h3zero_callback_ctx_t * h3_ctx = h3zero_callback_create_context(&server_params);
-    if (h3_ctx == NULL) {
-        fprintf(stderr, "failed to create h3zero server context\n");
-        return 1;
-    }
-
+    // h3zero_callback (picohttp/h3zero_common.c) checks, on a connection's
+    // FIRST callback invocation, whether callback_ctx == the default ctx
+    // registered at picoquic_create time -- if so, it treats that pointer
+    // as a picohttp_server_parameters_t* and builds a fresh, per-connection
+    // h3zero_callback_ctx_t from it via h3zero_callback_create_context().
+    // Passing an ALREADY-BUILT h3zero_callback_ctx_t* here (as an earlier
+    // version of this file did) is a type-confusion bug: the framework
+    // reinterprets that memory as a picohttp_server_parameters_t, reading
+    // garbage path_table/path_table_nb -- harmless for GET (fails closed
+    // to 404-ish), but an out-of-bounds path_table[] access (and crash) for
+    // POST, which is exactly the SIGSEGV this was causing. Fixed by passing
+    // &server_params directly, matching picoquicdemo.c's own quic_server().
     uint8_t reset_seed[PICOQUIC_RESET_SECRET_SIZE];
     memset(reset_seed, 0x55, sizeof(reset_seed));
     picoquic_quic_t * quic = picoquic_create(64,
         cert_path.c_str(), key_path.c_str(), NULL, "h3",
-        h3zero_callback, h3_ctx, NULL, NULL,
+        h3zero_callback, &server_params, NULL, NULL,
         reset_seed, picoquic_current_time(), NULL, NULL, NULL, 0);
     if (quic == NULL) {
         fprintf(stderr, "picoquic_create failed (check cert/key paths: %s / %s)\n",
