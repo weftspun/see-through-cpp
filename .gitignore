@@ -17,6 +17,8 @@ gen_reference/*.bin
 verify/.lake/
 scratch_*/
 scratch_*.psd
+scratch_*.svg
+scratch_*.png
 debug_*/
 demo_token_store.bin
 demo_ticket_store.bin

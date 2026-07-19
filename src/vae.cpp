@@ -273,10 +273,69 @@ ggml_tensor * unet1024(Model & m, ggml_tensor * x, ggml_tensor * latent) {
     return sample;
 }
 
+// unet1024, tiled: this is a LayerDiffuse-custom architecture (not stock
+// diffusers, so no off-the-shelf tiled_* to copy) but its down_blocks 0-2
+// each halve the spatial size once before the pixel/latent fusion at i==3
+// (`sample = sample + sample_latent`) -- three halvings is exactly the
+// pixel->latent 8x downscale, so a pixel tile and its co-located latent
+// tile (both from vae_encode_tiled/vae_decode_tiled's own 512px/64-latent
+// grid) line up exactly at that fusion point. Running this network
+// untiled at full 1280px was the remaining source of visible tile seams
+// (from vae_decode_tiled's own residual seam getting smeared/amplified
+// through unet1024's convolutions, since nothing here was blending them
+// back out) and likely of the missing fine detail (face/ears) -- same
+// out-of-trained-scale reasoning as vae_encode_tiled/vae_decode_tiled.
+static ggml_tensor * unet1024_tiled(Model & m, ggml_tensor * x, ggml_tensor * latent) {
+    ggml_context * ctx = m.ctx_g;
+    const int64_t W = x->ne[0], H = x->ne[1];
+    const int64_t TILE_PX     = 512;
+    const int64_t OVERLAP_PX  = TILE_PX * 3 / 4;      // 384
+    const int64_t BLEND_PX    = TILE_PX / 4;          // 128
+    const int64_t ROW_LIMIT_PX = TILE_PX - BLEND_PX;  // 384
+
+    if (H <= TILE_PX && W <= TILE_PX) { return unet1024(m, x, latent); }
+
+    std::vector<int64_t> row0, col0;
+    for (int64_t i = 0; i < H; i += OVERLAP_PX) { row0.push_back(i); }
+    for (int64_t j = 0; j < W; j += OVERLAP_PX) { col0.push_back(j); }
+
+    std::vector<std::vector<ggml_tensor *>> tiles(row0.size(), std::vector<ggml_tensor *>(col0.size()));
+    for (size_t ti = 0; ti < row0.size(); ti++) {
+        for (size_t tj = 0; tj < col0.size(); tj++) {
+            const int64_t i = row0[ti], j = col0[tj];
+            const int64_t th = std::min(TILE_PX, H - i), tw = std::min(TILE_PX, W - j);
+            ggml_tensor * x_tile = ggml_cont(ctx, ggml_view_4d(ctx, x, tw, th, x->ne[2], x->ne[3],
+                                                               x->nb[1], x->nb[2], x->nb[3],
+                                                               j * x->nb[0] + i * x->nb[1]));
+            const int64_t li = i / 8, lj = j / 8, lh = th / 8, lw = tw / 8;
+            ggml_tensor * lat_tile = ggml_cont(ctx, ggml_view_4d(ctx, latent, lw, lh, latent->ne[2], latent->ne[3],
+                                                                 latent->nb[1], latent->nb[2], latent->nb[3],
+                                                                 lj * latent->nb[0] + li * latent->nb[1]));
+            tiles[ti][tj] = unet1024(m, x_tile, lat_tile);
+        }
+    }
+
+    ggml_tensor * result = nullptr;
+    for (size_t ti = 0; ti < tiles.size(); ti++) {
+        ggml_tensor * row_cat = nullptr;
+        for (size_t tj = 0; tj < tiles[ti].size(); tj++) {
+            ggml_tensor * t = tiles[ti][tj];
+            if (ti > 0) { t = blend_edge(m, tiles[ti - 1][tj], t, BLEND_PX, 1); }
+            if (tj > 0) { t = blend_edge(m, tiles[ti][tj - 1], t, BLEND_PX, 0); }
+            const int64_t ch = std::min(t->ne[1], ROW_LIMIT_PX), cw = std::min(t->ne[0], ROW_LIMIT_PX);
+            t = ggml_cont(ctx, ggml_view_4d(ctx, t, cw, ch, t->ne[2], t->ne[3],
+                                            t->nb[1], t->nb[2], t->nb[3], 0));
+            row_cat = row_cat ? ggml_concat(ctx, row_cat, t, 0) : t;
+        }
+        result = result ? ggml_concat(ctx, result, row_cat, 1) : row_cat;
+    }
+    return result;
+}
+
 ggml_tensor * trans_vae_decode(Model & m, ggml_tensor * z) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * pixel = vae_decode_tiled(m, z);
     pixel = ggml_scale_bias(ctx, pixel, 0.5f, 0.5f);        // [-1,1] -> [0,1]
-    ggml_tensor * y = unet1024(m, pixel, z);
+    ggml_tensor * y = unet1024_tiled(m, pixel, z);
     return ggml_clamp(ctx, y, 0.0f, 1.0f);                  // estimate_augmented clip
 }

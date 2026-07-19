@@ -209,6 +209,26 @@ Policy:
       count. This item is fully closed.
       **Not yet done**: Q4_0 quantized-model validation at this shape —
       tracked as its own checklist item below.
+      **Follow-up defect found and fixed after the above closed**: real
+      visual-quality bug report at res=1280 ("face and ears missing, seam
+      in the arm-to-shoulder region") — `unet1024` (LayerDiffuse's
+      TransparentVAE alpha-prediction head) was the one remaining
+      component still running fully untiled at 1280px even after
+      `vae_encode_tiled`/`vae_decode_tiled` landed, since it's a custom
+      (non-diffusers) architecture with no off-the-shelf tiled variant.
+      Its down_blocks 0-2 each halve spatial resolution once (8x total)
+      before fusing with the raw latent at `i==3`, exactly matching the
+      pixel-to-latent 8x scale — so a pixel tile and its co-located latent
+      tile from the *same* 512px/64-latent grid already used for VAE
+      tiling align perfectly at that fusion point, making it tileable with
+      identical grid/parameters. Implemented `unet1024_tiled` in
+      `vae.cpp` (mirrors `vae_decode_tiled`'s tile/blend/crop/concat
+      structure, but takes both a pixel tile and a co-located latent tile
+      per call), wired into `trans_vae_decode` in place of the plain
+      `unet1024` call. **Verified**: full 1280px/8-step run with the fix
+      shows both arms rendering as smooth, continuous limbs shoulder-to-
+      fingertip (seam gone) and coherent face/ear content present in their
+      individual layer PNGs (skin/blush detail, fur/feather texture).
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning. **Checked,
       not currently reproducible**: audited every L/R-split tag
