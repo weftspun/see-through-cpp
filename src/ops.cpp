@@ -246,9 +246,37 @@ ggml_tensor * attn_block(Model & m, ggml_tensor * x, const std::string & pre) {
     k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, k, hd, n_head, T, N), 0, 2, 1, 3));
     v = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, T, N), 1, 2, 0, 3)); // (T,d,H,N)
 
-    ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                     // (T,T,H,N)
-    kq = ggml_soft_max(ctx, ggml_scale(ctx, kq, 1.0f / sqrtf((float) hd)));
-    ggml_tensor * kqv = ggml_mul_mat(ctx, v, kq);                   // (d,T,H,N)
+    ggml_tensor * kqv;
+    if (m.tiled_naive_attn) {
+        // attn_block's spatial self-attention is always-naive, always
+        // O(T^2), and completely untiled -- at the VAE decoder's mid_block
+        // (T = latent_res^2, e.g. 25600 at res=1280/ZR=160), this is the
+        // one unguarded quadratic-in-T op in the whole decode chain (conv2d
+        // is O(T) and row-chunk-tiled/Lean-gated; attn_tokens has the
+        // flash_attn/tiled_naive_attn knobs). Suspected site of the paused
+        // 1280px collapse (docs/ggml-upstream-issues.md #4) since neither
+        // was ever exercised here before -- reuses the same query-tiling
+        // idea as attn_tokens_tiled_naive.
+        const int64_t target_bytes = 512LL * 1024 * 1024;
+        const int64_t per_token = std::max<int64_t>(T * n_head * N * (int64_t) sizeof(float), 1);
+        int64_t chunk = std::min<int64_t>(T, std::max<int64_t>(1, target_bytes / per_token));
+        ggml_tensor * acc = nullptr;
+        for (int64_t t0 = 0; t0 < T; t0 += chunk) {
+            const int64_t t1 = std::min(t0 + chunk, T);
+            ggml_tensor * qc = ggml_cont(ctx, ggml_view_4d(ctx, q, hd, t1 - t0, n_head, N,
+                                                           q->nb[1], q->nb[2], q->nb[3],
+                                                           t0 * q->nb[1]));
+            ggml_tensor * kqc = ggml_mul_mat(ctx, k, qc);           // (T, chunk, H, N)
+            kqc = ggml_soft_max(ctx, ggml_scale(ctx, kqc, 1.0f / sqrtf((float) hd)));
+            ggml_tensor * chunk_kqv = ggml_mul_mat(ctx, v, kqc);    // (d, chunk, H, N)
+            acc = acc ? ggml_concat(ctx, acc, chunk_kqv, 1) : chunk_kqv;
+        }
+        kqv = acc;
+    } else {
+        ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                     // (T,T,H,N)
+        kq = ggml_soft_max(ctx, ggml_scale(ctx, kq, 1.0f / sqrtf((float) hd)));
+        kqv = ggml_mul_mat(ctx, v, kq);                                 // (d,T,H,N)
+    }
     kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));       // (d,H,T,N)
     kqv = ggml_reshape_3d(ctx, kqv, C, T, N);                       // (C, T, N)
 

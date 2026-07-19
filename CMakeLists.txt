@@ -42,3 +42,6 @@ endforeach()
 add_executable(probe_flash_bigT tests/probe_flash_bigT.cpp)
 target_link_libraries(probe_flash_bigT PRIVATE seethrough_c)
 target_include_directories(probe_flash_bigT PRIVATE src)
+
+add_executable(probe_attn_block_tiled tests/probe_attn_block_tiled.cpp)
+target_link_libraries(probe_attn_block_tiled PRIVATE seethrough)

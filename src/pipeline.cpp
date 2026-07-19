@@ -83,13 +83,16 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
             m.direct_conv = true;
             m.conv_row_chunk = !getenv("SEETHROUGH_NO_ROWCHUNK_UNET");
             m.conv_row_chunk_min_hw = 40 * 40;
-            // A/B diagnostic for the 1280px collapse (docs/ggml-upstream-
-            // issues.md #4): query-tiled naive attention instead of
-            // flash_attn, VRAM-bounded so it can actually run at production
-            // token counts (unlike a plain flash_attn=false toggle, which
-            // OOMs). attn_tokens() checks this ahead of flash_attn.
-            m.tiled_naive_attn = getenv("SEETHROUGH_TILED_ATTN") != nullptr;
         }
+        // A/B diagnostic for the 1280px collapse (docs/ggml-upstream-
+        // issues.md #4): query-tiled naive attention instead of the plain
+        // naive path, VRAM-bounded so it can actually run at production
+        // token counts (unlike a plain flash_attn=false toggle, which
+        // OOMs). Applies to both attn_tokens (diffusion UNet, ahead of
+        // flash_attn) and attn_block (VAE mid_block/unet1024 spatial
+        // self-attention, always-naive otherwise, unguarded at any T) --
+        // not gated on `unet` since attn_block matters for the VAE model.
+        m.tiled_naive_attn = getenv("SEETHROUGH_TILED_ATTN") != nullptr;
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
     }
     return m.load(path.c_str());

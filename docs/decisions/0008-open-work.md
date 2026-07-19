@@ -48,15 +48,21 @@ Policy:
       symptom, not a separate "content-quality" bug): `direct_conv` and
       `flash_attn` are both **excluded** (the latter decisively, via an
       exact VRAM-safe tiled-naive-attention substitute,
-      `Model.tiled_naive_attn`, that reproduces the identical collapse).
-      Row-chunk tile-boundary logging shows the tiling arithmetic itself
-      is clean at every spatial size in the decode. A pre-decode latent
-      dump shows the latent is statistically normal (no edge collapse) —
-      **the bug is isolated to the VAE decode stage itself**
-      (`vae_decode`/`trans_vae_decode` in `src/vae.cpp`), not the UNet, not
-      attention, not row-chunk tiling arithmetic. See
+      `Model.tiled_naive_attn`). Row-chunk tile-boundary logging shows the
+      tiling arithmetic itself is clean at every spatial size. A
+      pre-decode latent dump shows the latent is statistically normal —
+      **the bug lives in `vae_decode`/`unet1024`** (`src/vae.cpp`), not the
+      UNet's own diffusion pass. Also tiled `attn_block` (the VAE
+      mid-block/`unet1024` spatial self-attention, previously always-naive
+      and completely unguarded) after catching and fixing a real precision
+      bug in that tiling (verified via `tests/probe_attn_block_tiled.cpp`)
+      — but tiling it does not fix the collapse; it produces a *worse*,
+      fully-incoherent result, suggesting the output is right at a fragile
+      numerical edge rather than one single clean-cut op being wrong. See
       docs/ggml-upstream-issues.md item 4's updated "Status: paused, but
-      substantially narrowed" note for the full chain of exclusions.
+      substantially narrowed" note for the full chain of exclusions and
+      the remaining suspects (resnet blocks, group norm, upsampler,
+      cross-stage skip connections within that chain).
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning
 - [ ] Upstream parity: match our SVG's per-tag layers against upstream's

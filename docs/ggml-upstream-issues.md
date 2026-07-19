@@ -185,14 +185,60 @@ bump/taper — ordinary boundary behavior, nothing like the pixel-space
 collapse.) This rules out the UNet/latent computation as the source: the
 corruption is introduced specifically during VAE decode, not before it.
 
+Update: `trans_vae_decode` (`src/vae.cpp`) chains two networks: the base
+`vae_decode` (mid-block spatial self-attention at T=ZR^2, e.g. 25600 at
+res=1280) and `unet1024`, a *second*, deeper residual UNet that runs
+directly at full pixel resolution (7 down/up block stages, 3 of them with
+spatial self-attention). Both use `attn_block` (`ops.cpp`), a completely
+separate code path from `attn_tokens` — always naive, never gated by
+`flash_attn`, and with no tiling at all before this session. This had
+never been exercised by any prior test in this investigation (the
+`SEETHROUGH_TILED_ATTN` runs upstream in this doc only ever touched
+`attn_tokens`, since the VAE model load path never set
+`m.tiled_naive_attn`).
+
+Added a tiled variant to `attn_block` and wired it in for the VAE model
+too. First attempt introduced a real (if minor) precision regression —
+caught by a fast standalone probe (`tests/probe_attn_block_tiled.cpp`)
+comparing tiled vs. non-tiled `attn_block` in isolation: `attn_block`'s
+existing naive branch scales the KQ product *after* the matmul, while the
+new tiled branch (copying `attn_tokens_tiled_naive`'s convention) scaled Q
+*before* — a valid reordering in exact math, but the two branches'
+pre-existing conventions actually differed from each other, and mixing
+them measured ~3-4% relative error even in the degenerate single-chunk
+case. Fixed to scale after the matmul, matching `attn_block`'s own
+convention; the probe then showed exact agreement at a single chunk and
+~0.28% at a real multi-chunk split (152x152=23104 tokens, several chunks)
+— ordinary floating-point chunking noise, not a bug.
+
+With the fix in place, the full 1280px pipeline was rerun with both
+`attn_tokens` and `attn_block` tiled (`SEETHROUGH_TILED_ATTN=1`). Result:
+the *same* full-canvas failure as the buggy pre-fix version — an
+incoherent dark-noise canvas, actually less structured than the
+already-collapsed 854x70 thin-band. Tiling `attn_block` does not fix the
+collapse; it makes the output worse, not better. This is still useful
+information: it suggests the model's output at this resolution is right
+at a fragile numerical edge, sensitive enough that even a ~0.28%
+per-call perturbation, compounded across `unet1024`'s ~10+ `attn_block`
+invocations in one forward pass, is enough to push a marginal defect into
+total incoherence — consistent with (though not proof of) something
+resolution-boundary-related rather than a single clean-cut kernel bug.
+`attn_block`'s tiling fix is kept (it's a real, independently-useful
+correctness fix and VRAM-bounding option for a previously completely
+unguarded O(T^2) op) but is **not** the root-cause fix, and
+`SEETHROUGH_TILED_ATTN` is left opt-in, not default, since enabling it
+currently makes the production symptom worse.
+
 Status: paused, but substantially narrowed. `direct_conv`, `flash_attn`
-(decisively, via an exact VRAM-safe substitute), the row-chunk tiling
-arithmetic, and the UNet/latent computation are all excluded. The bug is
-isolated to the VAE decode stage (`vae_decode`/`trans_vae_decode` in
-`src/vae.cpp`) specifically — something in its resnet blocks, mid-block
-attention, upsampler, or trans-vae-specific layers produces near-empty
-output at res=1280 despite a normal input latent and correct row-chunk
-tiling. Not yet bisected further within the decode graph itself.
+(via `attn_tokens`, decisively), the row-chunk tiling arithmetic, the
+UNet/latent computation, and now `attn_block`'s tiling-vs-non-tiling
+distinction are all excluded or shown not to help. The collapse is
+confirmed to live somewhere in `vae_decode`/`unet1024`
+(`src/vae.cpp`), but not narrowed past "one of resnet blocks / group norm
+/ upsampler / attn_block's core (non-tiling-related) numerics /
+cross-stage skip connections in that chain" — and the sensitivity-to-
+perturbation observation above suggests further probing should look for a
+marginal/boundary condition rather than a single obviously-wrong op.
 
 ## Remediation policy
 
