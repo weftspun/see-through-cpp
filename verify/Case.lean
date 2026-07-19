@@ -32,7 +32,7 @@ structure Case where
   tq    : UInt32 := 0
   tk    : UInt32 := 0
   batch : UInt32 := 1
-  knobs : UInt32 := 0   -- bit0 direct, bit1 rowchunk, bit2 flash
+  knobs : UInt32 := 0   -- bit0 direct, bit1 rowchunk, bit2 flash, bit3 tiled naive attn
   deriving Repr, Inhabited
 
 def Case.check (cs : Case) (seed : UInt64) : Float :=

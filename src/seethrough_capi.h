@@ -36,6 +36,7 @@ typedef struct st_case {
     int32_t direct;       // conv2d knob: ggml_conv_2d_direct
     int32_t rowchunk;     // conv2d knob: row-chunked im2col
     int32_t flash;        // attn knob: ggml_flash_attn_ext
+    int32_t tiled;        // attn knob: query-tiled naive attention
     uint64_t seed;        // deterministic weight/input generation
 } st_case;
 
@@ -50,7 +51,8 @@ ST_API const char * st_device(void);
 // Flat-scalar variant for FFI hosts without struct marshalling (Lean 4
 // @[extern]): op 0 = conv2d, 1 = attn, 2 = linear_quant (c=in, oc=out,
 // tq=token count; candidate weight is ggml's own Q4_0, reference is f32);
-// knobs bit0 = direct, bit1 = rowchunk, bit2 = flash (ignored for op 2).
+// knobs bit0 = direct, bit1 = rowchunk, bit2 = flash, bit3 = tiled naive
+// attention (ignored for op 2).
 // Deterministic in all arguments.
 ST_API double st_witness_check_flat(uint32_t op, uint32_t w, uint32_t h, uint32_t c,
                              uint32_t oc, uint32_t stride, uint32_t heads,

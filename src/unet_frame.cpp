@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 ggml_tensor * attn_tokens(Model & m, ggml_tensor * q_src, ggml_tensor * kv_src,
                           const std::string & pre, int n_head) {
@@ -15,7 +17,41 @@ ggml_tensor * attn_tokens(Model & m, ggml_tensor * q_src, ggml_tensor * kv_src,
     ggml_tensor * v = linear(m, kv_src, pre + ".to_v");
 
     ggml_tensor * kqv;
-    if (m.flash_attn) {
+    if (m.tiled_naive_attn) {
+        // same math as the plain naive branch below, but tiled over Tq: the
+        // full (Tk,Tq,H,B) kq intermediate OOMs at 1280px production token
+        // counts (~21GB at Tk=Tq=6400,H=10,B=13), which is exactly why
+        // flash_attn couldn't be disabled to test it in isolation. Tiling
+        // over Tq keeps each chunk's kq at a fixed VRAM budget regardless of
+        // T -- a diagnostic/fallback path for docs/ggml-upstream-issues.md #4.
+        q = ggml_scale(ctx, q, 1.0f / sqrtf((float) hd));
+        q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, q, hd, n_head, Tq, B), 0, 2, 1, 3)); // (hd,Tq,H,B)
+        k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, k, hd, n_head, Tk, B), 0, 2, 1, 3));  // (hd,Tk,H,B)
+        v = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, Tk, B), 1, 2, 0, 3));  // (Tk,hd,H,B)
+
+        const int64_t target_bytes = 512LL * 1024 * 1024;
+        const int64_t per_token = std::max<int64_t>(Tk * n_head * B * (int64_t) sizeof(float), 1);
+        int64_t chunk = std::min<int64_t>(Tq, std::max<int64_t>(1, target_bytes / per_token));
+
+        ggml_tensor * acc = nullptr;
+        for (int64_t t0 = 0; t0 < Tq; t0 += chunk) {
+            const int64_t t1 = std::min(t0 + chunk, Tq);
+            ggml_tensor * qc = ggml_cont(ctx, ggml_view_4d(ctx, q, hd, t1 - t0, n_head, B,
+                                                           q->nb[1], q->nb[2], q->nb[3],
+                                                           t0 * q->nb[1]));
+            ggml_tensor * kq = ggml_mul_mat(ctx, k, qc);   // (Tk, chunk, H, B)
+            kq = ggml_soft_max(ctx, kq);
+            ggml_tensor * chunk_kqv = ggml_mul_mat(ctx, v, kq); // (hd, chunk, H, B)
+            acc = acc ? ggml_concat(ctx, acc, chunk_kqv, 1) : chunk_kqv;
+            if (getenv("SEETHROUGH_DEBUG_TILEDATTN")) {
+                fprintf(stderr, "[tiledattn] Tk=%lld Tq=%lld H=%d B=%lld chunk=%lld t0=%lld t1=%lld\n",
+                        (long long) Tk, (long long) Tq, n_head, (long long) B,
+                        (long long) chunk, (long long) t0, (long long) t1);
+            }
+        }
+        kqv = ggml_cont(ctx, ggml_permute(ctx, acc, 0, 2, 1, 3));  // (hd,H,Tq,B)
+        kqv = ggml_reshape_3d(ctx, kqv, C, Tq, B);
+    } else if (m.flash_attn) {
         // ggml_flash_attn_ext: q/k/v all (hd, T, H, B), v NOT transposed,
         // scale applied internally; result contiguous (hd*H, Tq, B)
         q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, q, hd, n_head, Tq, B), 0, 2, 1, 3));

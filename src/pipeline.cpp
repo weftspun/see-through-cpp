@@ -83,6 +83,12 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
             m.direct_conv = true;
             m.conv_row_chunk = !getenv("SEETHROUGH_NO_ROWCHUNK_UNET");
             m.conv_row_chunk_min_hw = 40 * 40;
+            // A/B diagnostic for the 1280px collapse (docs/ggml-upstream-
+            // issues.md #4): query-tiled naive attention instead of
+            // flash_attn, VRAM-bounded so it can actually run at production
+            // token counts (unlike a plain flash_attn=false toggle, which
+            // OOMs). attn_tokens() checks this ahead of flash_attn.
+            m.tiled_naive_attn = getenv("SEETHROUGH_TILED_ATTN") != nullptr;
         }
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
     }

@@ -49,7 +49,23 @@ def productionDomain : Array Case := #[
   attn "flash-t4096-b12"  5 4096 4096 12 4,
   attn "flash-t4096-b1"   5 4096 4096 1 4,
   attn "flash-cross-77"   10 6400 77 13 4,   -- cross-attn vs 77-token text
-  attn "flash-temporal"   10 13 13 6400 4    -- cross-frame: tiny T, huge batch
+  attn "flash-temporal"   10 13 13 6400 4,   -- cross-frame: tiny T, huge batch
+  -- query-tiled naive attention (docs/ggml-upstream-issues.md #4's
+  -- diagnostic/fallback for the paused 1280px collapse): same math as the
+  -- naive reference, chunked over Tq. NOTE: st_witness_check's REFERENCE
+  -- side always runs the untiled naive path regardless of the candidate's
+  -- knobs, so this can only be gated at the same (shape,batch) combinations
+  -- the existing flash-* cases already restrict themselves to for that
+  -- reason (flash-t6400-b13/flash-t4096-b13 are excluded upstream too, see
+  -- the comment above) -- tiling helps the *pipeline* run untiled attention
+  -- at b13, it doesn't make the naive reference itself b13-feasible here.
+  attn "tiled-t1600-b13"  10 1600 1600 13 8,
+  attn "tiled-t6400-b2"   10 6400 6400 2  8,
+  attn "tiled-t6400-b1"   10 6400 6400 1  8,
+  attn "tiled-t4096-b12"  5  4096 4096 12 8,
+  attn "tiled-t4096-b1"   5  4096 4096 1  8,
+  attn "tiled-cross-77"   10 6400 77   13 8,
+  attn "tiled-temporal"   10 13   13   6400 8
 ]
 
 def main : IO UInt32 := do

@@ -24,6 +24,15 @@ struct Model {
     float gn_eps    = 1e-6f;
     int   head_dim  = 0;      // spatial attn: 0 = one head of dim C
     bool  flash_attn = false; // token attention via ggml_flash_attn_ext (GPU)
+    bool  tiled_naive_attn = false; // query-tiled naive attention instead of
+                                  // flash_attn: same math as the plain naive
+                                  // path but chunked over Tq so the (Tk,Tq,H,B)
+                                  // kq intermediate stays VRAM-bounded at
+                                  // production token counts (see attn_tokens
+                                  // in unet_frame.cpp) -- a diagnostic/
+                                  // fallback path for the suspected 1280px
+                                  // flash_attn defect (docs/ggml-upstream-
+                                  // issues.md #4)
     bool  direct_conv = false;   // ggml_conv_2d_direct instead of im2col
                                  // (huge peak-VRAM win; WRONG for the VAE
                                  // encoder stride-2/pad-0 downsample path

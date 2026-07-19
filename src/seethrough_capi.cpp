@@ -145,9 +145,10 @@ std::vector<float> conv_run(Fixture & fx, const st_case & c, bool direct, bool r
     return r;
 }
 
-std::vector<float> attn_run(Fixture & fx, const st_case & c, bool flash,
+std::vector<float> attn_run(Fixture & fx, const st_case & c, bool flash, bool tiled,
                             const std::vector<float> & q, const std::vector<float> & kv) {
     fx.m.flash_attn = flash;
+    fx.m.tiled_naive_attn = tiled;
     const int C = 64 * c.heads;
     ggml_tensor * qt = nullptr, * kt = nullptr;
     auto r = run1(fx,
@@ -163,6 +164,7 @@ std::vector<float> attn_run(Fixture & fx, const st_case & c, bool flash,
             ggml_backend_tensor_set(kt, kv.data(), 0, kv.size() * 4);
         });
     fx.m.flash_attn = false;
+    fx.m.tiled_naive_attn = false;
     return r;
 }
 
@@ -198,6 +200,7 @@ double st_witness_check_flat(uint32_t op, uint32_t w, uint32_t h, uint32_t c,
     sc.direct = (knobs & 1) != 0;
     sc.rowchunk = (knobs & 2) != 0;
     sc.flash = (knobs & 4) != 0;
+    sc.tiled = (knobs & 8) != 0;
     sc.seed = seed;
     return st_witness_check(&sc);
 }
@@ -227,8 +230,8 @@ double st_witness_check(const st_case * c) {
         fx.weight("a.to_out.0.bias", { C });
         std::vector<float> q = fx.randvec((size_t) C * c->tq * c->batch);
         std::vector<float> kv = fx.randvec((size_t) C * c->tk * c->batch);
-        auto ref = attn_run(fx, *c, false, q, kv);
-        auto cand = attn_run(fx, *c, c->flash != 0, q, kv);
+        auto ref = attn_run(fx, *c, false, false, q, kv);
+        auto cand = attn_run(fx, *c, c->flash != 0, c->tiled != 0, q, kv);
         return interval_violation(cand, ref, 1e-3, 8.0 / 1024.0);
     }
     if (strcmp(c->op, "linear_quant") == 0) {
