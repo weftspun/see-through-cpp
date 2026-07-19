@@ -20,6 +20,16 @@ jobs:
 
       - uses: seanmiddleditch/gha-setup-ninja@master
 
+      # windows-latest defaults to whatever's earliest on PATH (MinGW gcc
+      # here), not MSVC -- fine for the CPU backend, but vulkan-shaders-gen's
+      # CreateProcessA-based glslc invocation only works with the MSVC
+      # toolchain actually used (and proven) in local dev. Force it for the
+      # Windows Vulkan job specifically; leave windows/cpu on its default
+      # since it already builds fine there.
+      - name: Set up MSVC
+        if: matrix.backend == 'vulkan' && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       # ggml-vulkan needs Vulkan headers/loader + glslc (shaderc) at build
       # time to compile its GLSL compute shaders to SPIR-V -- no GPU/driver
       # needed since GHA runners never execute the resulting binary against
