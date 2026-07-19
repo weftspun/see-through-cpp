@@ -43,7 +43,7 @@ differs numerically from im2col for the stride-2/pad-0 + asymmetric-
 `ggml_pad` encoder pattern, magnitude ~3.6 — possibly out-of-contract usage,
 but it fails silently rather than asserting.)
 
-Note: re-verified via the Lean witness gate (`verify/Verify.lean`,
+Note: re-verified via the Lean witness gate (`verify/KernelGate.lean`,
 `st_witness_check_flat`) at the exact original shape (1280x1280, C=4, OC=4,
 k3 s1 p1) with a fresh random witness — it did NOT reproduce (interval
 ~0.07, contained). The original repro (deleted `tests/test_graph_properties.
@@ -51,6 +51,39 @@ cpp`) never hard-asserted on this case either (informational printf only).
 Treat as data/seed-dependent rather than deterministic; the row-chunked
 decode path remains the mitigation regardless, so no action is blocked on
 this.
+
+## 4. Suspected: ggml_conv_2d_direct wrong at the UNet's 160x160 latent
+   level, only with real trained weights, only at res=1280
+
+The full 1280px pipeline collapses every per-tag output layer to a thin
+crop (~7% of expected height) at `--steps` >= 8 (steps=4 stays clean, but
+that's likely just heavy noise masking the effect, not a real pass).
+Bisected by resolution (all multiples of 64, as required by trans-vae's
+6-stage decoder — see the `validate_resolution`/`--res` rounding added in
+`src/see_through.cpp`): 512, 896, 1088, 1152, 1216 (ZR = res/8 = 64 through
+152) all decode cleanly; only res=1280 (ZR=160) — the very next multiple of
+64 above the last clean point — collapses. This pins the defect to
+something specific about *exactly* 1280, not a gradual size-dependent
+drift.
+
+The only resolution-scaling knobs in the UNet are `direct_conv`
+(`ggml_conv_2d_direct`) and `flash_attn`, both always-on for GPU regardless
+of resolution (`pipeline.cpp`'s `pipe_load`). `direct_conv` operates on the
+UNet's three latent levels (ZR, ZR/2, ZR/4); only res=1280 reaches
+ZR=160 among tested values. The existing Lean witness gate validates
+`direct_conv` at exactly this shape (`unet-direct-160-320-*` cases) and
+finds it contained — but only with *synthetic random Gaussian weights*,
+never the real trained checkpoint. A real-weight-specific numerical edge
+case (e.g. triggered by specific value ranges/magnitudes absent from
+N(0,0.5) test data) at this one shape is the leading hypothesis.
+
+Not yet confirmed: disabling `direct_conv` outright to test this directly
+OOMs immediately (a single 5.75GB allocation for the 160x160 level's im2col
+fallback fails — no VRAM headroom once other models/buffers are loaded),
+so the isolation test needs a real replacement (row-chunked conv at just
+this level, extended to handle the UNet's batch>1 cross-frame tensors,
+unlike the existing row-chunk code which requires `ne[3]==1`) rather than
+a flag flip. Tracked as an open item.
 
 ## Remediation policy
 

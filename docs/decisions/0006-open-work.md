@@ -43,21 +43,35 @@ Policy:
 
 ### Validation
 
-- [ ] Full-quality run on the upstream sample (`common/assets/test_image.png`,
-      1280px/30 steps, GPU) with verified per-layer content — last attempt
-      died at step 26/30 with no error trace, predates the current binaries;
-      needs a fresh run now that the op-level gates are clean
-- [ ] If the fresh 1280 run still corrupts despite clean kernel gates, the
-      bug is in orchestration (graph assembly/reuse, gallocr input
-      recycling across the 30-step loop) rather than any single op —
-      narrow with `--debug-dir` frame dumps per step
+- [x] Diagnosed the 1280px layer collapse: bisected by resolution across
+      every valid multiple of 64 (512 through 1216 all clean; only 1280
+      collapses) — pins it to something specific about exactly the UNet's
+      160x160 latent level with *real* trained weights (the Lean witness
+      gate only validated that shape with synthetic random weights). Ruled
+      out gallocr input-recycling (all inputs already re-set every
+      compute) and scheduler numerics (per-step lat mean/std decay
+      smoothly, no NaN/blowup). See docs/ggml-upstream-issues.md item 4.
+- [ ] Fix the 1280px collapse: needs a row-chunked (or otherwise
+      composed) replacement for `direct_conv` at just the UNet's 160x160
+      level — disabling `direct_conv` outright OOMs (5.75GB single alloc
+      fails), so this needs real engineering (the existing row-chunk conv
+      requires batch=1; the UNet's cross-frame tensors are batch=13),
+      not a flag flip.
+- [x] Found and fixed a related bug while bisecting: the CLI crashed
+      (unhandled `abort()`, hanging MSVC dialog) on any `--res`/
+      `--depth-res` not a multiple of the VAE decoders' required stride
+      (64 for trans-vae's 6 stages, 8 for marigold-vae's 3) instead of
+      validating input. Now rounds up with a printed note, matching the
+      pattern of upstream's own (otherwise unused) `validate_resolution()`.
 - [ ] Layer-quality polish vs upstream reference: L/R-split slivers at the
       pad boundary, faint head-pass alphas, alpha floor tuning
-- [ ] Upstream parity: `inference_psd.py --save_to_psd` on the same
-      seed/input (upstream only emits PSD; we don't reintroduce a PSD
-      writer for this — extract per-layer alpha masks from the PSD and
-      compare against our SVG's `<image>` PNGs / `--png-dir` output) —
-      per-layer alpha-mask IoU (>0.98 where tags match) + depth ordering
+- [ ] Upstream parity: match our SVG's per-tag layers against upstream's
+      output by tag name and compare alpha masks (>0.98 IoU where tags
+      match) + depth ordering. Decided against comparing against upstream's
+      PSD (no PSD reader in our C++, and we don't want a Python dev-tool
+      dependency for this) — needs a C++ tool using ThorVG to parse SVG,
+      and a non-PSD upstream reference to compare against (open: what that
+      reference format is, since upstream only emits PSD).
 - [ ] Full-quality run with the Q4_0-quantized models (currently only
       smoke-tested at 512px/4 steps) — same 1280px/30-step + upstream
       parity bar as the f16 baseline, see MADR 0005
