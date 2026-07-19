@@ -37,9 +37,18 @@ jobs:
       - name: Configure
         shell: bash
         run: |
+          extra_prefix=""
+          if [ -n "${VULKAN_SDK:-}" ]; then
+            # ggml-vulkan's find_package(SPIRV-Headers CONFIG REQUIRED) needs
+            # this exact subpath findable -- usually covered by CMake's
+            # default <prefix>/lib/cmake/<name> search, but spelled out
+            # explicitly since one platform's SDK layout didn't resolve it.
+            extra_prefix="$VULKAN_SDK/Lib/cmake;$VULKAN_SDK/lib/cmake"
+          fi
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DGGML_VULKAN=${{ matrix.backend == 'vulkan' && 'ON' || 'OFF' }} \
-            -DSEETHROUGH_BUILD_H3_SERVER=ON
+            -DSEETHROUGH_BUILD_H3_SERVER=ON \
+            -DCMAKE_PREFIX_PATH="$extra_prefix"
 
       # Core targets must succeed -- these are the actual product.
       - name: Build core
@@ -91,6 +100,11 @@ jobs:
           zstd -dc /tmp/ref/reference_bins.tar.zst | tar -xf - -C gen_reference
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build scheduler/DDIM test binaries
+        if: runner.os == 'macOS'
+        shell: bash
+        run: cmake --build build --config Release --target test_scheduler --target test_ddim -j
 
       - name: Run scheduler/DDIM numeric gates
         if: runner.os == 'macOS'

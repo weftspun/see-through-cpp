@@ -4,6 +4,11 @@ project(see-through-cpp CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# seethrough (STATIC) is linked into two SHARED libraries (seethrough_c,
+# see_through_c) -- GNU ld enforces PIC for anything going into a shared
+# object, unlike MSVC/Windows where this was never an issue locally.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # diffusers UNet state-dict names exceed ggml's default 64-char cap
 add_compile_definitions(GGML_MAX_NAME=128)
 
