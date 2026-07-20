@@ -29,3 +29,5 @@ _index.html
 traces_in/
 profiling/
 /traces_*
+golden_l_r_arms_legs_output.psd
+golden_output.psd

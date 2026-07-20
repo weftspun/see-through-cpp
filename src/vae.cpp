@@ -38,7 +38,7 @@ ggml_tensor * vae_encode(Model & m, ggml_tensor * x, std::vector<ggml_tensor *> 
     sample = conv2d(m, sample, "encoder.conv_out");              // moments, 8ch
     sample = conv2d(m, sample, "quant_conv", 1, 0);              // 1x1
     // posterior mean = first 4 channels of the moments
-    return ggml_cont(ctx, ggml_view_4d(ctx, sample, sample->ne[0], sample->ne[1], 4, 1,
+    return ggml_cont(ctx, ggml_view_4d(ctx, sample, sample->ne[0], sample->ne[1], 4, sample->ne[3],
                                        sample->nb[1], sample->nb[2], sample->nb[3], 0));
 }
 

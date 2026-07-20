@@ -93,31 +93,31 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
         // toggle, which OOMs). Applies to both attn_tokens (diffusion UNet,
         // ahead of flash_attn) and attn_block (VAE mid_block/unet1024
         // spatial self-attention, always-naive otherwise, unguarded at any
-        // T). Part of the confirmed 1280px-collapse fix (docs/ggml-
+        // T) -- not gated on `unet` since attn_block matters for the VAE
+        // model. Part of the confirmed 1280px-collapse fix (docs/ggml-
         // upstream-issues.md #4): unet1024's first spatial self-attention
         // (head_dim=8, 32 heads, T=6400) overflows Vulkan's ~4.295GB
         // maxStorageBufferRange in the plain naive path, corrupting output
         // silently -- confirmed exact against independent CPU ground truth
-        // when tiled. This correctness fix is unconditional for the VAE's
-        // attn_block (never gated on `unet`) -- there is no evidence either
-        // way for attn_block at smaller sizes, and it isn't the perf
-        // bottleneck, so there is no reason to risk it.
+        // when tiled. On by default now; SEETHROUGH_NO_TILED_ATTN reverts
+        // to the plain (defective, at this shape) path for A/B testing.
         //
-        // For the diffusion UNet's attn_tokens specifically, flash_attn was
-        // separately ruled OUT as the 1280px collapse's cause (Lean witness
-        // testing, docs/ggml-upstream-issues.md #4: "mathematically exact
-        // against the naive reference at every gated shape") -- it's not a
-        // correctness risk there, only an unverified-VRAM-at-1280px one
-        // (that doc only confirms tiled_naive_attn's safety at 1280px, not
-        // flash_attn's -- the plain non-tiled OOM that motivated building
-        // tiled_naive_attn was measured on the naive path, not flash).
-        // Prefer flash_attn over tiled for attn_tokens at resolutions this
-        // session validated it doesn't OOM at (<=768); keep the VRAM-safe
-        // tiled fallback at anything larger, matching the resolution the
-        // OOM was actually observed at. SEETHROUGH_NO_TILED_ATTN forces
-        // tiled off entirely (falls through to flash_attn) for A/B testing
-        // at any resolution.
-        m.tiled_naive_attn = !getenv("SEETHROUGH_NO_TILED_ATTN") && (!unet || cfg.res > 768);
+        // A resolution-gated flash_attn preference was tried here (only
+        // for `unet`-flagged loads, `!unet || cfg.res > 768`) reasoning
+        // that flash_attn was proven exact for layerdiff-unet's shapes
+        // (docs #4, Lean witness cases at layerdiff's t6400/t1600 token
+        // counts). That reasoning had a real gap: `unet=true` covers BOTH
+        // layerdiff-unet AND marigold-unet identically here, and only
+        // layerdiff-unet's shapes were ever validated -- marigold-unet has
+        // a materially different architecture (12 vs 8 sample channels,
+        // different attention shapes) that was never gated. At res=768 the
+        // marigold-unet call flipped to flash_attn too and produced
+        // corrupted depth output for most tags (depth_median pinned to
+        // 1.0) -- caught and reverted. If flash_attn is worth revisiting,
+        // it needs its own validation for marigold-unet's specific shapes
+        // first, or a way to distinguish which UNet is loading, not a
+        // blanket `unet` flag.
+        m.tiled_naive_attn = !getenv("SEETHROUGH_NO_TILED_ATTN");
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
     }
     return m.load(path.c_str());
@@ -420,56 +420,48 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         std::string p = cfg.model_dir + "/marigold-vae.gguf";
         if (!pipe_load(cfg, mv, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
 
-        // Batch the page + all F layers in chunks (ne3=CHUNK) instead of
-        // F+1 fully-separate graph calls: vae_encode_tiled/vae_encode pass
-        // the batch axis through every op untouched (tiling only splits the
-        // spatial axes), so batching itself is a pure perf change -- same
-        // math, less CPU/driver graph-build overhead. NOT batched all at
-        // once, though: F+1=20 in one graph tried to allocate a 31.5GB
-        // Vulkan buffer and OOM'd (this machine had only ~12GB free VRAM
-        // with other apps running) -- ~1.6GB/frame observed, so a chunk of
-        // 4 stays comfortably under typical free VRAM while still cutting
-        // graph-build calls ~4x.
-        const int CHUNK = 4;
-        std::vector<float> all_lat((size_t) (F + 1) * DZ);
-        for (int base = 0; base < F + 1; base += CHUNK) {
-            const int n = std::min(CHUNK, F + 1 - base);
-            std::vector<float> feed((size_t) n * RES * RES * 3);
-            for (int i = 0; i < n; i++) {
-                int slot = base + i;
-                const Image & argb = (slot == F) ? layers_argb.back() : layers_argb[slot];
-                Image im = argb;
-                if (im.w != RES || im.h != RES) im = smart_resize(im, RES, RES);
-                Image rgb = pad_rgb(im);
-                float * dst = feed.data() + (size_t) i * RES * RES * 3;
-                for (size_t p = 0; p < (size_t) RES * RES; p++) {
-                    for (int c = 0; c < 3; c++) {
-                        dst[(size_t) c * RES * RES + p] = rgb.data[p * 3 + c] * 2.0f - 1.0f;
-                    }
+        // Reverted to one graph build+compute per image (was briefly
+        // batched in chunks for perf; that version corrupted depth output
+        // for most frames via a bug never fully isolated -- see git history
+        // -- and hadn't even shown a proven speedup once the OOM it first
+        // hit was fixed. Correctness over an unproven optimization.
+        auto encode_one = [&](const Image & argb, std::vector<float> & out_lat) -> bool {
+            Image im = argb;
+            if (im.w != RES || im.h != RES) im = smart_resize(im, RES, RES);
+            Image rgb = pad_rgb(im);
+            std::vector<float> feed((size_t) RES * RES * 3);
+            for (size_t i = 0; i < (size_t) RES * RES; i++) {
+                for (int c = 0; c < 3; c++) {
+                    feed[(size_t) c * RES * RES + i] = rgb.data[i * 3 + c] * 2.0f - 1.0f;
                 }
             }
             ggml_tensor * x = nullptr;
             std::vector<std::vector<float>> outs;
+            // vae_encode_tiled: see the layerdiff page-latent comment above;
+            // passes through to plain vae_encode when RES fits in one tile
+            // (depth_res is usually <=512, but stay consistent/safe if not).
             bool ok = run_graph_dev(cfg, mv, 98304,
                 [&]() {
-                    x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, n);
+                    x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
                     ggml_set_input(x);
                     return std::vector<ggml_tensor *>{ ggml_scale(mv.ctx_g, vae_encode_tiled(mv, x), SCALE) };
                 },
                 [&]() { ggml_backend_tensor_set(x, feed.data(), 0, feed.size() * 4); },
                 outs);
-            if (!ok) return false;
-            std::copy(outs[0].begin(), outs[0].end(), all_lat.begin() + (size_t) base * DZ);
-            if (cfg.verbose) { printf("[marigold] cond %d/%d\r", base + n, F + 1); fflush(stdout); }
+            if (ok) out_lat = std::move(outs[0]);
+            return ok;
+        };
+
+        std::vector<float> page_lat;
+        if (!encode_one(layers_argb.back(), page_lat)) return false;
+        for (int f = 0; f < F; f++) {
+            std::vector<float> ll;
+            if (!encode_one(layers_argb[f], ll)) return false;
+            std::copy(page_lat.begin(), page_lat.end(), cond.begin() + (size_t) f * 2 * DZ);
+            std::copy(ll.begin(), ll.end(), cond.begin() + (size_t) f * 2 * DZ + DZ);
+            if (cfg.verbose) { printf("[marigold] cond %d/%d\r", f + 1, F); fflush(stdout); }
         }
         if (cfg.verbose) printf("\n");
-
-        const float * page_lat = all_lat.data() + (size_t) F * DZ;
-        for (int f = 0; f < F; f++) {
-            std::copy(page_lat, page_lat + DZ, cond.begin() + (size_t) f * 2 * DZ);
-            std::copy(all_lat.begin() + (size_t) f * DZ, all_lat.begin() + (size_t) (f + 1) * DZ,
-                      cond.begin() + (size_t) f * 2 * DZ + DZ);
-        }
     }
 
     // empty-prompt embedding from marigold-te
@@ -566,43 +558,30 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         if (!pipe_load(cfg, mv, p)) return false;
         if (pipe_gpu(cfg)) mv.conv_row_chunk = true;   // decode stage only
         depths_out.assign(F, Image{});
-
-        // batch frames in chunks (ne3=CHUNK) instead of F fully-separate
-        // graph calls -- see the cond-encode loop above for why this isn't
-        // one single ne3=F batch (OOM'd at F=20).
-        const int CHUNK = 4;
-        const size_t P = (size_t) RES * RES;
-        for (int base = 0; base < F; base += CHUNK) {
-            const int n = std::min(CHUNK, F - base);
-            std::vector<float> z((size_t) DZ * n);
-            for (int i = 0; i < n; i++) {
-                for (size_t j = 0; j < DZ; j++) {
-                    z[(size_t) i * DZ + j] = lat[(size_t) (base + i) * DZ + j] / SCALE;
-                }
-            }
+        for (int f = 0; f < F; f++) {
+            std::vector<float> z(DZ);
+            for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
             ggml_tensor * zt = nullptr;
             std::vector<std::vector<float>> outs;
             bool ok = run_graph_dev(cfg, mv, 8192,
                 [&]() {
-                    zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, n);
+                    zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
                     return std::vector<ggml_tensor *>{ vae_decode_tiled(mv, zt) };
                 },
                 [&]() { ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4); },
                 outs);
             if (!ok) return false;
-            for (int i = 0; i < n; i++) {
-                Image & d = depths_out[base + i];
-                d.w = d.h = RES; d.c = 1;
-                d.data.resize(P);
-                const float * fr = outs[0].data() + (size_t) i * 3 * P;
-                for (size_t j = 0; j < P; j++) {
-                    float v = (fr[j] + fr[P + j] + fr[2 * P + j]) / 3.0f;
-                    v = v < -1.0f ? -1.0f : v > 1.0f ? 1.0f : v;
-                    d.data[j] = (v + 1.0f) / 2.0f;
-                }
+            Image & d = depths_out[f];
+            d.w = d.h = RES; d.c = 1;
+            d.data.resize((size_t) RES * RES);
+            const size_t P = (size_t) RES * RES;
+            for (size_t i = 0; i < P; i++) {
+                float v = (outs[0][i] + outs[0][P + i] + outs[0][2 * P + i]) / 3.0f;
+                v = v < -1.0f ? -1.0f : v > 1.0f ? 1.0f : v;
+                d.data[i] = (v + 1.0f) / 2.0f;
             }
-            if (cfg.verbose) { printf("[marigold] decode %d/%d\r", base + n, F); fflush(stdout); }
+            if (cfg.verbose) { printf("[marigold] decode %d/%d\r", f + 1, F); fflush(stdout); }
         }
         if (cfg.verbose) printf("\n");
     }
@@ -943,6 +922,23 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
                 if (!layerdiff_pass(cfg, head_rgb, ehs2, pooled2, 1, head_layers)) { s.ok = false; return false; }
             }
 
+            if (!cfg.debug_dir.empty()) {
+                for (size_t t = 0; t < HEAD_TAGS_V3.size(); t++) {
+                    Image & hl = head_layers[t];
+                    int cnt = 0; float amax = 0;
+                    for (size_t i = 0; i < (size_t) hl.w * hl.h; i++) {
+                        float a = hl.data[i * 4 + 3];
+                        if (a > 15.0f / 255.0f) cnt++;
+                        amax = std::max(amax, a);
+                    }
+                    printf("[debug] raw head_layers[%s]: w=%d h=%d alpha_max=%.4f pixels>15/255=%d\n",
+                           HEAD_TAGS_V3[t].c_str(), hl.w, hl.h, amax, cnt);
+                    std::ofstream f(cfg.debug_dir + "/raw_head_" + HEAD_TAGS_V3[t] + ".png", std::ios::binary);
+                    std::vector<uint8_t> png = encode_png(hl);
+                    f.write(reinterpret_cast<const char *>(png.data()), (std::streamsize) png.size());
+                }
+            }
+
             // reproject each head layer to the fullpage canvas
             const int ch = head_crop.h, cw = head_crop.w;
             int py1 = (int) (hp_y / scale), py2 = (int) ((hp_y + ch) / scale);
@@ -980,6 +976,23 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
             f.write(reinterpret_cast<const char *>(png.data()), (std::streamsize) png.size());
             printf("[debug] dumped raw uncropped topwear layer (%dx%d)\n",
                    it->second.w, it->second.h);
+        }
+        for (const char * tag : { "face", "nose", "mouth", "headwear" }) {
+            auto it2 = v3_layers.find(tag);
+            if (it2 == v3_layers.end()) continue;
+            Image & im = it2->second;
+            int cnt10 = 0, cnt15 = 0; float amax = 0;
+            for (size_t i = 0; i < (size_t) im.w * im.h; i++) {
+                float a = im.data[i * 4 + 3];
+                if (a > 10.0f / 255.0f) cnt10++;
+                if (a > 15.0f / 255.0f) cnt15++;
+                amax = std::max(amax, a);
+            }
+            printf("[debug] post-reproject v3_layers[%s]: w=%d h=%d alpha_max=%.4f "
+                   "pixels>10/255=%d pixels>15/255=%d\n", tag, im.w, im.h, amax, cnt10, cnt15);
+            std::ofstream f2(cfg.debug_dir + "/postreproj_" + std::string(tag) + ".png", std::ios::binary);
+            std::vector<uint8_t> png2 = encode_png(im);
+            f2.write(reinterpret_cast<const char *>(png2.data()), (std::streamsize) png2.size());
         }
     }
 
