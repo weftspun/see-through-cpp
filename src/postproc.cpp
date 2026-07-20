@@ -148,14 +148,32 @@ static double median_of(std::vector<float> v) {
 }
 
 void crop_part(Part & p) {
-    int x0 = p.img.w, y0 = p.img.h, x1 = -1, y1 = -1;
-    std::vector<float> dvals;
+    // largest-connected-component bbox, not naive min/max: the raw decode
+    // carries a small (~10px, low-alpha) corner artifact in every layer (see
+    // pipeline.cpp's bbox_alpha_largest_cc), which otherwise inflates this
+    // tag's crop rectangle out to the canvas corner -- the same failure mode
+    // that corrupted the head-crop bbox, just at this call site instead.
+    std::vector<uint8_t> mask((size_t) p.img.w * p.img.h, 0);
     for (int y = 0; y < p.img.h; y++) {
         for (int x = 0; x < p.img.w; x++) {
-            if (p.img.px(x, y)[3] > 10.0f / 255.0f) {
-                x0 = std::min(x0, x); y0 = std::min(y0, y);
-                x1 = std::max(x1, x); y1 = std::max(y1, y);
-                dvals.push_back(p.depth.px(x, y)[0]);
+            if (p.img.px(x, y)[3] > 10.0f / 255.0f) { mask[(size_t) y * p.img.w + x] = 1; }
+        }
+    }
+    std::vector<int> labels;
+    std::vector<CCStats> stats;
+    int n = connected_components(mask, p.img.w, p.img.h, labels, stats);
+    int best = 0;
+    for (int l = 1; l < n; l++) {
+        if (stats[l].area > (best ? stats[best].area : 0)) { best = l; }
+    }
+    std::vector<float> dvals;
+    int x0 = 0, y0 = 0, x1 = -1, y1 = -1;
+    if (best) {
+        CCStats & s = stats[best];
+        x0 = s.x; y0 = s.y; x1 = s.x + s.w - 1; y1 = s.y + s.h - 1;
+        for (int y = s.y; y < s.y + s.h; y++) {
+            for (int x = s.x; x < s.x + s.w; x++) {
+                if (labels[(size_t) y * p.img.w + x] == best) { dvals.push_back(p.depth.px(x, y)[0]); }
             }
         }
     }
