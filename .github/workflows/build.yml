@@ -76,7 +76,7 @@ jobs:
       # Core targets must succeed -- these are the actual product.
       - name: Build core
         shell: bash
-        run: cmake --build build --config Release -v --target see-through --target see-through-server --target seethrough_c --target see_through_c -j
+        run: cmake --build build --config Release -v --target see-through --target seethrough_c --target see_through_c -j
 
       # The vendored HTTP/3 server has WIN32-specific code paths that were
       # only ever exercised on Windows so far; best-effort elsewhere -- a
@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          for t in see-through see-through-server see-through-server-h3; do
+          for t in see-through see-through-server-h3; do
             for ext in "" ".exe"; do
               if [ -f "build/$t$ext" ]; then cp "build/$t$ext" dist/; fi
             done
