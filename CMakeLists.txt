@@ -21,6 +21,18 @@ add_compile_definitions(GGML_MAX_NAME=128)
 # Force it off so we don't link against OpenMP at all.
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 
+# Same problem as GGML_OPENMP above, one layer down: MinGW-w64 gcc/clang
+# dynamically links libgcc_s_seh-1.dll, libstdc++-6.dll and
+# libwinpthread-1.dll by default. None of those ship in the release zips
+# our CI packages (they're MinGW/MSYS2 toolchain files, not build
+# outputs), so every exe/DLL we produce fails to launch with
+# STATUS_DLL_NOT_FOUND on a plain Windows machine. Statically link the
+# toolchain runtime instead so the binaries are self-contained. No effect
+# on MSVC builds (which never dynamically link these in the first place).
+if (WIN32 AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC"))
+    add_link_options(-static-libgcc -static-libstdc++ -static)
+endif()
+
 add_subdirectory(third_party/ggml)
 
 # psd_sdk's own CMakeLists.txt requires a cmake_minimum_required too old for
