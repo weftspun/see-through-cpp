@@ -12,6 +12,15 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # diffusers UNet state-dict names exceed ggml's default 64-char cap
 add_compile_definitions(GGML_MAX_NAME=128)
 
+# We only ship cpu/vulkan backends and drive threading ourselves via
+# PipelineConfig::threads / ggml's own thread pool -- ggml's OpenMP option
+# defaults ON and, on MinGW Windows builds, makes every binary depend on
+# libgomp-1.dll at runtime. That DLL isn't part of the MinGW toolchain's
+# redistributable set our CI packages, so release binaries fail to even
+# start on a machine without MSYS2/MinGW installed (STATUS_DLL_NOT_FOUND).
+# Force it off so we don't link against OpenMP at all.
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+
 add_subdirectory(third_party/ggml)
 
 # psd_sdk's own CMakeLists.txt requires a cmake_minimum_required too old for
