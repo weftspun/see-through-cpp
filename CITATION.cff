@@ -29,13 +29,13 @@ preferred-citation:
   journal: "arXiv preprint arXiv:2602.03749"
   year: 2026
   url: "https://arxiv.org/abs/2602.03749"
-  repository-code: "https://github.com/weftspun/see-through"
+  repository-code: "https://github.com/shitagaki-lab/see-through"
 references:
   - type: software
     title: See-Through (upstream PyTorch reference implementation)
     authors:
       - name: "Shitagaki Lab"
-    repository-code: "https://github.com/weftspun/see-through"
+    repository-code: "https://github.com/shitagaki-lab/see-through"
     license: Apache-2.0
   - type: software
     title: "ComfyUI-See-through (test assets and community fork)"
