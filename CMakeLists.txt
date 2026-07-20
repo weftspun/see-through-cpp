@@ -33,6 +33,16 @@ if (WIN32 AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC"))
     add_link_options(-static-libgcc -static-libstdc++ -static)
 endif()
 
+# ggml defaults BUILD_SHARED_LIBS to ON everywhere except MinGW, which
+# splits it into ggml-base/ggml-cpu/ggml(.dll/.so/.dylib) that see-through
+# dynamically loads at runtime. CI's packaging step only copies the
+# top-level exe/DLL targets it knows the names of, never these -- so the
+# non-MinGW release zips (MSVC Windows/Vulkan, Linux, macOS) are missing a
+# hard runtime dependency and fail to launch at all outside the build tree.
+# Build ggml statically everywhere so every produced binary is
+# self-contained; matches the MinGW static-runtime fix above in spirit.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
 add_subdirectory(third_party/ggml)
 
 # psd_sdk's own CMakeLists.txt requires a cmake_minimum_required too old for
