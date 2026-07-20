@@ -118,6 +118,30 @@ static ggml_tensor * mul_mat_f32(ggml_context * ctx, ggml_tensor * a2d, ggml_ten
     return r;
 }
 
+// im: im2col output [IC*K, OW, OH, N]; w: conv weight [KW, KH, IC, OC].
+// Returns [OW, OH, OC, N].
+//
+// ggml_mul_mat(a, b)'s fused dequant kernels only dispatch off of `a`'s type
+// -- `b` must already be float (see ggml-vulkan.cpp's mul_mat_q_f16: any
+// non-float `b` gets a fresh to_fp16 conversion pass inserted on *every*
+// call). Putting a quantized conv weight in `b` -- which is what mirroring
+// ggml's own reference ggml_conv_2d (im2col as a, weight as b) does -- means
+// every forward pass re-dequantizes the whole weight to fp16, silently
+// erasing the point of quantizing it. Route quantized weights through `a`
+// instead (same math, transposed output that gets permuted back).
+static ggml_tensor * conv_mm(ggml_context * ctx, ggml_tensor * im, ggml_tensor * w) {
+    ggml_tensor * im2d = ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]);
+    ggml_tensor * w2d  = ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]);
+    if (ggml_is_quantized(w->type)) {
+        ggml_tensor * r = mul_mat_f32(ctx, w2d, im2d);                                     // [OC, N*OH*OW]
+        r = ggml_reshape_4d(ctx, r, w->ne[3], im->ne[1], im->ne[2], im->ne[3]);            // [OC,OW,OH,N]
+        return ggml_cont(ctx, ggml_permute(ctx, r, 2, 0, 1, 3));                            // -> [OW,OH,OC,N]
+    }
+    ggml_tensor * r = mul_mat_f32(ctx, im2d, w2d);                                          // [N*OH*OW, OC]
+    r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);                 // [OW,OH,N,OC]
+    return ggml_cont(ctx, ggml_permute(ctx, r, 0, 1, 3, 2));                                // -> [OW,OH,OC,N]
+}
+
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int stride, int pad) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * w = m.get(pre + ".weight");
@@ -148,20 +172,12 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
                 // interior: horizontal pad only — output rows match exactly
                 ggml_tensor * im = ggml_im2col(ctx, w, slab, 1, 1, 1, 0, 1, 1, true,
                                                w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
-                ggml_tensor * r = mul_mat_f32(ctx,
-                    ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]),
-                    ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
-                r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
-                ys = ggml_cont(ctx, ggml_permute(ctx, r, 0, 1, 3, 2));
+                ys = conv_mm(ctx, im, w);
             } else {
                 // edge tiles: full pad then crop the halo rows back out
                 ggml_tensor * im = ggml_im2col(ctx, w, slab, 1, 1, 1, 1, 1, 1, true,
                                                w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32);
-                ggml_tensor * r = mul_mat_f32(ctx,
-                    ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]),
-                    ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
-                r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
-                ggml_tensor * full = ggml_cont(ctx, ggml_permute(ctx, r, 0, 1, 3, 2));
+                ggml_tensor * full = conv_mm(ctx, im, w);
                 ys = ggml_cont(ctx, ggml_view_4d(ctx, full, W, y1 - y0, w->ne[3], N,
                                                  full->nb[1], full->nb[2], full->nb[3],
                                                  (y0 - top) * full->nb[1]));
@@ -185,11 +201,7 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
     // the whole conv in f32 instead
     ggml_type it = w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
     ggml_tensor * im = ggml_im2col(ctx, w, x, stride, stride, pad, pad, 1, 1, true, it);
-    ggml_tensor * r = mul_mat_f32(ctx,
-        ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]),
-        ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]));
-    r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);
-    r = ggml_cont(ctx, ggml_permute(ctx, r, 0, 1, 3, 2));
+    ggml_tensor * r = conv_mm(ctx, im, w);
     if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
     return r;
 }
