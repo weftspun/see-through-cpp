@@ -44,24 +44,24 @@ static std::string kv_by_suffix(const Model & m, const char * suf) {
 }
 
 static ggml_backend_dev_t pipe_gpu(const PipelineConfig & cfg) {
-    if (cfg.device == "cpu") return nullptr;
     return ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
 }
 
 static ggml_backend_t pipe_backend(const PipelineConfig & cfg) {
-    ggml_backend_dev_t d = pipe_gpu(cfg);
-    if (d) return ggml_backend_dev_init(d, nullptr);
-    if (cfg.device != "cpu") {
-        // GPU is the primary target; CPU is an explicit opt-in only
-        // (--device cpu), never a silent fallback when Vulkan isn't found
-        fprintf(stderr, "error: no GPU device found (Vulkan) and --device cpu was not "
-                        "requested -- refusing to silently fall back to CPU. Pass "
-                        "--device cpu if you really want a CPU run.\n");
+    if (cfg.device == "cpu") {
+        // CPU route is blocklisted -- GPU (Vulkan) only. This isn't just
+        // "no silent fallback" anymore: --device cpu is rejected outright,
+        // same as any other unsupported --device value.
+        fprintf(stderr, "error: --device cpu is not supported -- this build is GPU"
+                        "-only (Vulkan). Run without --device (auto-selects the "
+                        "first GPU) or pass --device vulkan.\n");
         exit(1);
     }
-    ggml_backend_t b = ggml_backend_cpu_init();
-    ggml_backend_cpu_set_n_threads(b, cfg.threads);
-    return b;
+    ggml_backend_dev_t d = pipe_gpu(cfg);
+    if (d) return ggml_backend_dev_init(d, nullptr);
+    fprintf(stderr, "error: no GPU device found (Vulkan) -- this build is GPU-only, "
+                    "there is no CPU fallback.\n");
+    exit(1);
 }
 
 static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string & path,
@@ -729,6 +729,14 @@ static std::string safe_id(const std::string & tag) {
 }
 
 bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThroughResult & result) {
+    if (cfg.device == "cpu") {
+        // Fail before any (multi-GB) model loading happens, not partway
+        // through the first graph compute -- see pipe_backend().
+        fprintf(stderr, "error: --device cpu is not supported -- this build is GPU"
+                        "-only (Vulkan). Run without --device (auto-selects the "
+                        "first GPU) or pass --device vulkan.\n");
+        return false;
+    }
     const int RES = cfg.res;
     int pad_w, pad_h, pad_x, pad_y;
     Image fullpage = center_square_pad_resize(input, RES, 0.0f, &pad_w, &pad_h, &pad_x, &pad_y);

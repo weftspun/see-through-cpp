@@ -29,7 +29,7 @@ max-abs-diff gate, threshold 5e-2 unless noted):
 | LaMa FFC inpainting (custom 2-D FFT op) | `test_lama` | 1e-6 |
 | PSD writer | `test_psd` + `check_psd.py` | byte-exact round-trip |
 
-The `see-through` CLI runs the full pipeline on CPU:
+The `see-through` CLI runs the full pipeline on GPU (Vulkan):
 
 ```sh
 cmake -B build -G Ninja && cmake --build build
@@ -43,11 +43,12 @@ It produces `out.psd` (depth-ordered RGBA layers), `out_depth.psd` and
 [v0.0.1-dev release](../../releases/tag/v0.0.1-dev); files >2GB are
 zstd-compressed split parts (`cat parts | zstd -d -o file.gguf`).
 
-GPU (Vulkan) is the primary target — the CLI and tests pick the first
-registry GPU automatically (`--device cpu` / `SEETHROUGH_DEVICE=cpu` force
-the fallback). Run Vulkan binaries with `build-vulkan/bin` on PATH (shared
-ggml). `--png-dir <dir>` additionally exports per-layer RGBA + depth PNGs in
-z order with a `layers.json` manifest; `--debug-dir <dir>` dumps stage stats.
+GPU (Vulkan) is required — the CLI and tests pick the first registry GPU
+automatically, and error out if none is found. `--device cpu` is not
+supported; there is no CPU fallback. Run Vulkan binaries with
+`build-vulkan/bin` on PATH (shared ggml). `--png-dir <dir>` additionally
+exports per-layer RGBA + depth PNGs in z order with a `layers.json`
+manifest; `--debug-dir <dir>` dumps stage stats.
 
 ## Development
 
