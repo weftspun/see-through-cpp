@@ -30,7 +30,7 @@ int main(int argc, char ** argv) {
         else { fprintf(stderr, "unknown arg %s\n", a.c_str()); return 1; }
     }
     if (in_path.empty()) {
-        fprintf(stderr, "usage: see-through -m <model-dir> -i in.png -o out.psd "
+        fprintf(stderr, "usage: see-through -m <model-dir> -i in.png -o out.svg "
                         "[--seed N] [--steps N] [--res N] [--depth-res N] [--threads N] "
                         "[--device vulkan] (GPU-only; --device cpu is not supported)\n");
         return 1;
