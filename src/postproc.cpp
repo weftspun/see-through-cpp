@@ -195,6 +195,28 @@ void crop_part(Part & p) {
     p.xyxy[0] += x0; p.xyxy[1] += y0;
     p.img = std::move(img2);
     p.depth = std::move(dep2);
+
+    // upstream load_part (io_utils.py:521-595, further_extr's actual entry
+    // point -- every part passes through this before anything else): after
+    // cropping, trim the trailing max(w,h)//10 rows+cols and require >4
+    // real (alpha>10/255) pixels in what remains, else the part is dropped
+    // entirely (`return None`) -- a crop that's only real near its own
+    // trailing edge is a corner-hugging artifact, not real content.
+    // Faithfully reproduces Python's mask[:-p_test, :-p_test] slicing: when
+    // p_test == 0 (crop under 10px in its largest dimension -- exactly the
+    // case for a spurious few-px corner-artifact "part") that slice is
+    // mask[:0, :0], i.e. EMPTY, not "no trim" -- so any such tiny crop
+    // unconditionally fails and gets dropped, regardless of its content.
+    int p_test = std::max(p.img.w, p.img.h) / 10;
+    int iw = p_test > 0 ? std::max(0, p.img.w - p_test) : 0;
+    int ih = p_test > 0 ? std::max(0, p.img.h - p_test) : 0;
+    int cnt = 0;
+    for (int y = 0; y < ih && cnt <= 4; y++) {
+        for (int x = 0; x < iw && cnt <= 4; x++) {
+            if (p.img.px(x, y)[3] > 10.0f / 255.0f) { cnt++; }
+        }
+    }
+    if (cnt <= 4) { p.img.w = 0; p.img.h = 0; p.img.data.clear(); }
 }
 
 // ---------------------------------------------------------------------------
