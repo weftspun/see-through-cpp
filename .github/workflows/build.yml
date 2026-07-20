@@ -12,7 +12,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-14]
-        backend: [cpu, vulkan]
+        # cpu-only backend (GGML_VULKAN=OFF) dropped: --device cpu is
+        # blocklisted at runtime (src/pipeline.cpp), so a binary built
+        # without the Vulkan backend compiled in can never actually run
+        # inference -- shipping it as a release zip was dead-on-arrival.
+        backend: [vulkan]
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} / ${{ matrix.backend }}
     steps:
