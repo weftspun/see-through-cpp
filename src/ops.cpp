@@ -221,9 +221,29 @@ ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & 
     return ggml_add(ctx, x, m.get(pre + ".bias"));
 }
 
+// Same-math replacement for ggml_mul_mat(a, b) (contracts ne0 of both,
+// result ne={a->ne1, b->ne1, b->ne2, b->ne3}), routed through ggml_out_prod
+// instead. ggml-vulkan's mul_mat has a silent int8 fast path (quantize_y)
+// that quantizes whichever operand is second to Q8_1 whenever the device
+// supports VK_KHR_shader_integer_dot_product and that operand's
+// (ne0*ne1)%4==0 -- true for nearly every real conv/attention/linear shape
+// in this codebase (channel counts and token counts are almost always
+// multiples of 4), losing several percent of precision with no per-op way
+// to disable it. out_prod is a separate op with its own Vulkan dispatch that
+// has no such fast path. Verified via tests/test_winograd_conv.cpp (conv),
+// test_linear_precision.cpp (linear), and test_attn_precision.cpp
+// (attention QK^T / softmax*V) against a CPU-backend ground truth.
+// out_prod contracts ne1 not ne0, so both operands get that axis permuted
+// to ne1 first (same math, ggml_can_out_prod requires equal ne1 sizes).
+static ggml_tensor * mul_mat_op(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
+    ggml_tensor * a_op = ggml_cont(ctx, ggml_permute(ctx, a, 1, 0, 2, 3));
+    ggml_tensor * b_op = ggml_cont(ctx, ggml_permute(ctx, b, 1, 0, 2, 3));
+    return ggml_out_prod(ctx, a_op, b_op);
+}
+
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_context * ctx = m.ctx_g;
-    ggml_tensor * y = ggml_mul_mat(ctx, m.get(pre + ".weight"), x);
+    ggml_tensor * y = mul_mat_op(ctx, m.get(pre + ".weight"), x);
     if (m.has(pre + ".bias")) y = ggml_add(ctx, y, m.get(pre + ".bias"));
     return y;
 }
@@ -289,16 +309,16 @@ ggml_tensor * attn_block(Model & m, ggml_tensor * x, const std::string & pre) {
             ggml_tensor * qc = ggml_cont(ctx, ggml_view_4d(ctx, q, hd, t1 - t0, n_head, N,
                                                            q->nb[1], q->nb[2], q->nb[3],
                                                            t0 * q->nb[1]));
-            ggml_tensor * kqc = ggml_mul_mat(ctx, k, qc);           // (T, chunk, H, N)
+            ggml_tensor * kqc = mul_mat_op(ctx, k, qc);             // (T, chunk, H, N)
             kqc = ggml_soft_max(ctx, ggml_scale(ctx, kqc, 1.0f / sqrtf((float) hd)));
-            ggml_tensor * chunk_kqv = ggml_mul_mat(ctx, v, kqc);    // (d, chunk, H, N)
+            ggml_tensor * chunk_kqv = mul_mat_op(ctx, v, kqc);      // (d, chunk, H, N)
             acc = acc ? ggml_concat(ctx, acc, chunk_kqv, 1) : chunk_kqv;
         }
         kqv = acc;
     } else {
-        ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                     // (T,T,H,N)
+        ggml_tensor * kq = mul_mat_op(ctx, k, q);                       // (T,T,H,N)
         kq = ggml_soft_max(ctx, ggml_scale(ctx, kq, 1.0f / sqrtf((float) hd)));
-        kqv = ggml_mul_mat(ctx, v, kq);                                 // (d,T,H,N)
+        kqv = mul_mat_op(ctx, v, kq);                                   // (d,T,H,N)
     }
     kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));       // (d,H,T,N)
     kqv = ggml_reshape_3d(ctx, kqv, C, T, N);                       // (C, T, N)
