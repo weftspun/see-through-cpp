@@ -425,7 +425,17 @@ void further_extr_parts(std::map<std::string, Part> & parts, const Image & fullp
 
     auto face = parts.find("face");
     if (face != parts.end()) {
-        for (const char * t : { "nose", "mouth", "eyes" }) {
+        // "eyes" is never a key by this point -- tag_lr_split() above already
+        // explodes eyewhite/irides/eyelash/eyebrow into their own parts (and
+        // further into -l/-r variants when it finds two components), so the
+        // clamp has to name every one of those or it silently no-ops and
+        // leaves eye layers at their raw (often noisy-for-small-regions)
+        // marigold depth median, letting them sort behind the face.
+        for (const char * t : { "nose", "mouth",
+                                 "eyewhite", "eyewhite-l", "eyewhite-r",
+                                 "irides", "irides-l", "irides-r",
+                                 "eyelash", "eyelash-l", "eyelash-r",
+                                 "eyebrow", "eyebrow-l", "eyebrow-r" }) {
             auto it = parts.find(t);
             if (it != parts.end() && it->second.depth_median > face->second.depth_median) {
                 it->second.depth_median = face->second.depth_median - 0.001;
