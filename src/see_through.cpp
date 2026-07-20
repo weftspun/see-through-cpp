@@ -1,16 +1,46 @@
 // see-through CLI: single anime illustration -> layered SVG (+ optional
 // per-layer PNGs), the full upstream inference_psd.py flow on ggml.
 //
-//   see-through -m <model-dir> -i in.png -o out.svg
+//   see-through -m <model-dir> -i in.png -o out.svg (or out.psd for a flat,
+//   upstream-parity PSD instead of SVG)
 //               [--seed N] [--steps N] [--res N] [--depth-res N] [--threads N]
 //               [--no-split-depth] [--no-split-lr]
 //               [--split-depth-tags tag1,tag2,...] [--split-lr-tags tag1,tag2,...]
 
 #include "pipeline.h"
+#include "psd_write.h"
 
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+
+static std::string psd_json_escape(const std::string & s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '"' || c == '\\') { out += '\\'; }
+        out += c;
+    }
+    return out;
+}
+
+// matches upstream dump_parts_psd's "<psd_path>.json" sidecar: dict2json({
+// 'parts': tag2pinfo, 'frame_size': frame_size}, psd_savep + '.json') after
+// popping img/depth/mask off each part dict -- the only fields that survive
+// are tag/xyxy/depth_median, which is all psd2partdicts reads back.
+static std::string build_psd_json(const SeeThroughResult & result) {
+    std::string j = "{\"parts\": {";
+    for (size_t i = 0; i < result.png_layers.size(); i++) {
+        const std::string & tag = result.png_layers[i].first;
+        const std::array<int, 4> & bb = result.layer_xyxy[i];
+        if (i) { j += ", "; }
+        j += "\"" + psd_json_escape(tag) + "\": {\"tag\": \"" + psd_json_escape(tag) + "\", \"xyxy\": ["
+           + std::to_string(bb[0]) + ", " + std::to_string(bb[1]) + ", "
+           + std::to_string(bb[2]) + ", " + std::to_string(bb[3]) + "], \"depth_median\": "
+           + std::to_string(result.layer_depth_median[i]) + "}";
+    }
+    j += "}, \"frame_size\": [" + std::to_string(result.canvas_h) + ", " + std::to_string(result.canvas_w) + "]}";
+    return j;
+}
 
 static std::vector<std::string> split_csv(const std::string & s) {
     std::vector<std::string> out;
@@ -106,8 +136,27 @@ int main(int argc, char ** argv) {
         printf("wrote %d PNG layers to %s\n", pzi, png_dir.c_str());
     }
 
-    std::ofstream svg(out_path);
-    svg << result.svg;
+    bool as_psd = out_path.size() >= 4 && out_path.compare(out_path.size() - 4, 4, ".psd") == 0;
+    if (as_psd) {
+        if (!write_psd(out_path, result.canvas_w, result.canvas_h, result.png_layers, result.layer_xyxy)) {
+            fprintf(stderr, "failed to write %s\n", out_path.c_str());
+            return 1;
+        }
+        // matches upstream dump_parts_psd's "<stem>_depth.psd" companion
+        std::string depth_path = out_path.substr(0, out_path.size() - 4) + "_depth.psd";
+        if (!write_psd_gray(depth_path, result.canvas_w, result.canvas_h, result.depth_layers, result.layer_xyxy)) {
+            fprintf(stderr, "failed to write %s\n", depth_path.c_str());
+            return 1;
+        }
+        printf("wrote %s\n", depth_path.c_str());
+        // matches upstream's "<psd_path>.json" metadata sidecar
+        std::ofstream json_f(out_path + ".json");
+        json_f << build_psd_json(result);
+        printf("wrote %s.json\n", out_path.c_str());
+    } else {
+        std::ofstream svg(out_path);
+        svg << result.svg;
+    }
     printf("wrote %s (%zu layers)\n", out_path.c_str(), result.png_layers.size());
     // result.spans were already appended + flushed to cfg.spans_path
     // incrementally as each closed (see run_see_through) -- no batch write

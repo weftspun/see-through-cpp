@@ -8,6 +8,7 @@
 #include "otel_jsonl.h"
 #include "postproc.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -76,6 +77,19 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg);
 struct SeeThroughResult {
     std::string svg;
     std::vector<std::pair<std::string, std::vector<uint8_t>>> png_layers;
+    // 1-channel (grayscale) depth PNG per layer, same order/tag/crop as
+    // png_layers -- upstream's dump_parts_psd writes this as a companion
+    // "<name>_depth.psd" alongside the color PSD.
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> depth_layers;
+    // per-entry {x0,y0,x1,y1} in canvas_w x canvas_h coords, same order/index
+    // as png_layers/depth_layers -- carries the same placement the SVG's
+    // <image x y> attributes encode, for consumers (e.g. PSD export) that
+    // want layer bytes + position without re-parsing the SVG.
+    std::vector<std::array<int, 4>> layer_xyxy;
+    // same order/index as png_layers -- upstream's dump_parts_psd carries
+    // this (plus tag/xyxy) in the "<name>.psd.json" metadata sidecar.
+    std::vector<double> layer_depth_median;
+    int canvas_w = 0, canvas_h = 0;
     // OTel-style spans (root "run" span + one child per pipeline stage), for
     // the profiling data lake (see otel_jsonl.h) -- timed here rather than
     // left to external profilers (e.g. samply) so every run can log stage

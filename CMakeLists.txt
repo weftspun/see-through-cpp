@@ -74,8 +74,8 @@ add_library(seethrough STATIC
 target_link_libraries(seethrough PUBLIC ggml)
 target_include_directories(seethrough PUBLIC src stb)
 
-add_executable(see-through src/see_through.cpp)
-target_link_libraries(see-through PRIVATE seethrough)
+add_executable(see-through src/see_through.cpp src/psd_write.cpp)
+target_link_libraries(see-through PRIVATE seethrough Psd)
 
 add_library(seethrough_c SHARED src/seethrough_capi.cpp)
 target_link_libraries(seethrough_c PRIVATE seethrough)

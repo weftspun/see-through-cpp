@@ -1218,11 +1218,25 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     // silently doubling PNG-encode cost across every layer (a real chunk of
     // the ~92s postproc stage measured in profiling/spans.jsonl).
     result.png_layers.clear();
+    result.depth_layers.clear();
+    result.layer_xyxy.clear();
+    result.layer_depth_median.clear();
+    result.canvas_w = result.canvas_h = RES;
     std::vector<std::vector<uint8_t>> part_pngs;
     part_pngs.reserve(ordered.size());
     for (const Part * p : ordered) {
         part_pngs.push_back(encode_png(p->img));
-        result.png_layers.emplace_back(safe_id(p->tag), part_pngs.back());
+        // raw tag, not safe_id(): matches upstream's create_pixel_layer(name=tag)
+        // and this same function's own SVG data-tag attribute below -- safe_id()
+        // is an SVG `id=` XML-Name requirement (no spaces), not the tag's identity.
+        result.png_layers.emplace_back(p->tag, part_pngs.back());
+        result.layer_xyxy.push_back({ p->xyxy[0], p->xyxy[1], p->xyxy[2], p->xyxy[3] });
+        result.layer_depth_median.push_back(p->depth_median);
+
+        Image d1;
+        d1.w = p->depth.w; d1.h = p->depth.h; d1.c = 1;
+        d1.data = p->depth.data;
+        result.depth_layers.emplace_back(p->tag, encode_png(d1));
     }
 
     // layered SVG: document order = z order (back to front); depth maps in
@@ -1245,15 +1259,13 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     }
     svg += "  <g id=\"depth\" display=\"none\">\n";
     zi = 0;
-    for (const Part * p : ordered) {
-        Image d1;
-        d1.w = p->depth.w; d1.h = p->depth.h; d1.c = 1;
-        d1.data = p->depth.data;
+    for (size_t oi = 0; oi < ordered.size(); oi++) {
+        const Part * p = ordered[oi];
         svg += "    <image id=\"depth-" + safe_id(p->tag) + "\" x=\"" + std::to_string(p->xyxy[0])
              + "\" y=\"" + std::to_string(p->xyxy[1])
-             + "\" width=\"" + std::to_string(d1.w) + "\" height=\"" + std::to_string(d1.h)
+             + "\" width=\"" + std::to_string(p->depth.w) + "\" height=\"" + std::to_string(p->depth.h)
              + "\" data-tag=\"" + p->tag + "\" data-z=\"" + std::to_string(zi)
-             + "\" xlink:href=\"data:image/png;base64," + b64_encode(encode_png(d1))
+             + "\" xlink:href=\"data:image/png;base64," + b64_encode(result.depth_layers[oi].second)
              + "\"/>\n";
         zi++;
     }
