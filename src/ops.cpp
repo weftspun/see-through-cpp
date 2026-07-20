@@ -107,39 +107,40 @@ ggml_tensor * bias4d(ggml_context * ctx, ggml_tensor * b) {
     return ggml_reshape_4d(ctx, b, 1, 1, b->ne[0], 1);
 }
 
-// Vulkan's mul_mat reduction order differs from upstream/CPU just enough to
-// matter for the SDXL VAE encoder's mid_block.resnets.1 (an extreme outlier
-// weight makes its residual a near-perfect cancellation, see
-// docs/ggml-upstream-issues.md #4) -- force f32 accumulation instead of
-// coopmat2's reduced-precision default.
-static ggml_tensor * mul_mat_f32(ggml_context * ctx, ggml_tensor * a2d, ggml_tensor * b2d) {
-    ggml_tensor * r = ggml_mul_mat(ctx, a2d, b2d);
-    ggml_mul_mat_set_prec(r, GGML_PREC_F32);
-    return r;
-}
-
 // im: im2col output [IC*K, OW, OH, N]; w: conv weight [KW, KH, IC, OC].
 // Returns [OW, OH, OC, N].
 //
-// ggml_mul_mat(a, b)'s fused dequant kernels only dispatch off of `a`'s type
-// -- `b` must already be float (see ggml-vulkan.cpp's mul_mat_q_f16: any
-// non-float `b` gets a fresh to_fp16 conversion pass inserted on *every*
-// call). Putting a quantized conv weight in `b` -- which is what mirroring
-// ggml's own reference ggml_conv_2d (im2col as a, weight as b) does -- means
-// every forward pass re-dequantizes the whole weight to fp16, silently
-// erasing the point of quantizing it. Route quantized weights through `a`
-// instead (same math, transposed output that gets permuted back).
+// Uses ggml_out_prod, not ggml_mul_mat, for the IC*K contraction. History:
+// this used to be ggml_mul_mat with the weight in the second operand
+// (mirroring ggml's own reference ggml_conv_2d) -- silently wrong two
+// different ways on Vulkan. (1) ggml_mul_mat's fused dequant kernels only
+// dispatch off the first operand's type, so a quantized weight in the
+// second operand gets fully re-dequantized to fp16 on every single call.
+// (2) independent of quantization, ggml-vulkan's mul_mat has a separate int8
+// fast path (quantize_y) that silently quantizes whichever operand is
+// SECOND to Q8_1 whenever the device supports VK_KHR_shader_integer_dot_product
+// and that operand's (ne0*ne1) % 4 == 0 -- true for most real conv shapes
+// (channel counts are near-universally multiples of 4) regardless of which
+// operand (weight or activations) ends up second, losing several percent of
+// precision with no per-op way to disable it (GGML_PREC_F32 only selects a
+// variant of the quantized pipeline, it doesn't skip quantization). Simply
+// swapping operand order (tried first) only moves the bug to the other
+// operand. ggml_out_prod is a separate op (GGML_OP_OUT_PROD) with its own
+// Vulkan dispatch that doesn't have this fast path at all -- root-caused and
+// verified via winograd.cpp's conv2d_winograd_3x3s1, an independent
+// im2col-free construction that matched a CPU ground truth exactly while
+// this call site (via ggml_mul_mat, either operand order) diverged by
+// several percent on the same Vulkan device at real channel counts.
 static ggml_tensor * conv_mm(ggml_context * ctx, ggml_tensor * im, ggml_tensor * w) {
-    ggml_tensor * im2d = ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]);
-    ggml_tensor * w2d  = ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]);
-    if (ggml_is_quantized(w->type)) {
-        ggml_tensor * r = mul_mat_f32(ctx, w2d, im2d);                                     // [OC, N*OH*OW]
-        r = ggml_reshape_4d(ctx, r, w->ne[3], im->ne[1], im->ne[2], im->ne[3]);            // [OC,OW,OH,N]
-        return ggml_cont(ctx, ggml_permute(ctx, r, 2, 0, 1, 3));                            // -> [OW,OH,OC,N]
-    }
-    ggml_tensor * r = mul_mat_f32(ctx, im2d, w2d);                                          // [N*OH*OW, OC]
-    r = ggml_reshape_4d(ctx, r, im->ne[1], im->ne[2], im->ne[3], w->ne[3]);                 // [OW,OH,N,OC]
-    return ggml_cont(ctx, ggml_permute(ctx, r, 0, 1, 3, 2));                                // -> [OW,OH,OC,N]
+    ggml_tensor * im2d = ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]);  // [K, N*OH*OW]
+    ggml_tensor * w2d  = ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]);        // [K, OC]
+    // out_prod contracts ne1, not ne0 like mul_mat -- permute both operands
+    // so K (the contraction) lands on ne1.
+    ggml_tensor * w2d_op  = ggml_cont(ctx, ggml_permute(ctx, w2d, 1, 0, 2, 3));    // [OC, K]
+    ggml_tensor * im2d_op = ggml_cont(ctx, ggml_permute(ctx, im2d, 1, 0, 2, 3));   // [N*OH*OW, K]
+    ggml_tensor * r = ggml_out_prod(ctx, w2d_op, im2d_op);                         // [OC, N*OH*OW]
+    r = ggml_reshape_4d(ctx, r, w->ne[3], im->ne[1], im->ne[2], im->ne[3]);        // [OC,OW,OH,N]
+    return ggml_cont(ctx, ggml_permute(ctx, r, 2, 0, 1, 3));                        // -> [OW,OH,OC,N]
 }
 
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int stride, int pad) {
