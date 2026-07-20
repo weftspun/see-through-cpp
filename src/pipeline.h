@@ -23,6 +23,13 @@ struct PipelineConfig {
     bool verbose = true;
     std::string device = "auto";  // "auto"/"vulkan" = first GPU. GPU-only: "cpu" is rejected, not a fallback.
     std::string debug_dir;        // when set: dump per-stage stats + frames
+
+    // further_extr_parts heuristic control (see postproc.h PartsegFlags)
+    unsigned partseg_flags = PARTSEG_DEPTH | PARTSEG_LR;
+    std::vector<std::string> depth_split_tags = { "hair" };
+    std::vector<std::string> lr_split_tags = {
+        "handwear", "eyewhite", "irides", "eyelash", "eyebrow", "ears"
+    };
 };
 
 // tags (fixed v3 vocabulary)

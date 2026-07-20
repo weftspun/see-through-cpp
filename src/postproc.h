@@ -8,6 +8,13 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
+
+// bit flags for further_extr_parts's `partseg_flags` parameter
+enum PartsegFlags : unsigned {
+    PARTSEG_DEPTH = 1u << 0,   // enable hair-style depth (2-means) split
+    PARTSEG_LR    = 1u << 1,   // enable left/right connected-component split
+};
 
 struct Part {
     std::string tag;
@@ -44,10 +51,14 @@ using InpaintFn = std::function<Image(const Image & rgb, const std::vector<uint8
 std::vector<Part> cluster_inpaint_part(const Part & part, const InpaintFn & inpaint);
 
 // full further_extr heuristic pass over decoded parts (v3 tags), in place:
-// eyes/handwear/ears/eye-component L/R splits, hair front/back split (with
-// inpaint), nose/mouth RGB copyback from fullpage, face depth nudges.
+// L/R connected-component split (if PARTSEG_LR set, over lr_split_tags),
+// depth-cluster front/back split with inpaint (if PARTSEG_DEPTH set, over
+// depth_split_tags), nose/mouth RGB copyback from fullpage, face depth
+// nudges (always runs, independent of the flags).
 void further_extr_parts(std::map<std::string, Part> & parts, const Image & fullpage,
-                        const InpaintFn & inpaint);
+                        const InpaintFn & inpaint, unsigned partseg_flags,
+                        const std::vector<std::string> & depth_split_tags,
+                        const std::vector<std::string> & lr_split_tags);
 
 // crop a part to its alpha>10/255 bounding box and set depth_median
 void crop_part(Part & p);

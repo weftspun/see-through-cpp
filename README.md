@@ -23,8 +23,7 @@ cat marigold-unet.gguf.zst.part* | zstd -d -o marigold-unet.gguf
 rm *.zst.part*
 ```
 
-(Or grab a prebuilt release binary instead of building — see
-[Releases](../../releases).)
+(Or grab a prebuilt release binary instead of building)
 
 ## Build (Vulkan backend must be enabled explicitly — it's off by default in ggml):
 
@@ -50,3 +49,10 @@ Produces `out.svg` — one `<image>` element per layer, each with a
   default while iterating)
 - `--png-dir <dir>` — also export each layer as a separate PNG
 - `--seed 42` — for reproducible output
+- `--no-split-depth` / `--no-split-lr` — disable the depth-cluster
+  front/back split (default target: `hair`) or the left/right
+  connected-component split (default targets: `handwear`, `eyewhite`,
+  `irides`, `eyelash`, `eyebrow`, `ears`); both are on by default
+- `--split-depth-tags tag1,tag2,...` / `--split-lr-tags tag1,tag2,...` —
+  override which tags each split applies to (replaces the default list,
+  doesn't append to it)

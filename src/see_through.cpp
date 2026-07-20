@@ -3,12 +3,27 @@
 //
 //   see-through -m <model-dir> -i in.png -o out.svg
 //               [--seed N] [--steps N] [--res N] [--depth-res N] [--threads N]
+//               [--no-split-depth] [--no-split-lr]
+//               [--split-depth-tags tag1,tag2,...] [--split-lr-tags tag1,tag2,...]
 
 #include "pipeline.h"
 
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+
+static std::vector<std::string> split_csv(const std::string & s) {
+    std::vector<std::string> out;
+    size_t start = 0;
+    while (start <= s.size()) {
+        size_t comma = s.find(',', start);
+        std::string tok = s.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        if (!tok.empty()) out.push_back(tok);
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return out;
+}
 
 int main(int argc, char ** argv) {
     PipelineConfig cfg;
@@ -27,12 +42,18 @@ int main(int argc, char ** argv) {
         else if (a == "--device") { cfg.device = next(); }
         else if (a == "--debug-dir") { cfg.debug_dir = next(); }
         else if (a == "--png-dir") { png_dir = next(); }
+        else if (a == "--no-split-depth") { cfg.partseg_flags &= ~PARTSEG_DEPTH; }
+        else if (a == "--no-split-lr")    { cfg.partseg_flags &= ~PARTSEG_LR; }
+        else if (a == "--split-depth-tags") { cfg.depth_split_tags = split_csv(next()); }
+        else if (a == "--split-lr-tags")    { cfg.lr_split_tags = split_csv(next()); }
         else { fprintf(stderr, "unknown arg %s\n", a.c_str()); return 1; }
     }
     if (in_path.empty()) {
         fprintf(stderr, "usage: see-through -m <model-dir> -i in.png -o out.svg "
                         "[--seed N] [--steps N] [--res N] [--depth-res N] [--threads N] "
-                        "[--device vulkan] (GPU-only; --device cpu is not supported)\n");
+                        "[--device vulkan] (GPU-only; --device cpu is not supported) "
+                        "[--no-split-depth] [--no-split-lr] "
+                        "[--split-depth-tags tag1,tag2,...] [--split-lr-tags tag1,tag2,...]\n");
         return 1;
     }
     setvbuf(stdout, nullptr, _IONBF, 0);

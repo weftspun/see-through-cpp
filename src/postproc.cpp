@@ -392,22 +392,38 @@ std::vector<Part> cluster_inpaint_part(const Part & part, const InpaintFn & inpa
 }
 
 void further_extr_parts(std::map<std::string, Part> & parts, const Image & fullpage,
-                        const InpaintFn & inpaint) {
-    for (const char * tag : { "handwear", "eyewhite", "irides", "eyelash", "eyebrow", "ears" }) {
-        tag_lr_split(tag, parts);
+                        const InpaintFn & inpaint, unsigned partseg_flags,
+                        const std::vector<std::string> & depth_split_tags,
+                        const std::vector<std::string> & lr_split_tags) {
+    if (partseg_flags & PARTSEG_LR) {
+        for (const std::string & tag : lr_split_tags) {
+            tag_lr_split(tag, parts);
+        }
     }
 
-    auto hair = parts.find("hair");
-    if (hair != parts.end()) {
-        Part p = hair->second;
-        parts.erase(hair);
-        std::vector<Part> split = cluster_inpaint_part(p, inpaint);
-        std::sort(split.begin(), split.end(),
-                  [](const Part & a, const Part & b) { return a.depth_median < b.depth_median; });
-        split[0].tag = "hairf";
-        split[1].tag = "hairb";
-        parts["hairf"] = split[0];
-        parts["hairb"] = split[1];
+    if (partseg_flags & PARTSEG_DEPTH) {
+        // missing tag / degenerate 2-means (e.g. a single-pixel target) never
+        // crashes: cluster_inpaint_part always returns exactly two Parts,
+        // each a valid (possibly fully-transparent) w*h buffer -- no bbox
+        // recompute happens on this path, unlike the LR-split's process_cuts.
+        for (const std::string & tag : depth_split_tags) {
+            auto it = parts.find(tag);
+            if (it == parts.end()) continue;
+            Part p = it->second;
+            parts.erase(it);
+            std::vector<Part> split = cluster_inpaint_part(p, inpaint);
+            std::sort(split.begin(), split.end(),
+                      [](const Part & a, const Part & b) { return a.depth_median < b.depth_median; });
+            // "hair" keeps its historical hairf/hairb tag names (external
+            // consumers of already-shipped SVGs may depend on them); any
+            // other target tag gets the generic <tag>-front/<tag>-back names.
+            std::string front_tag = (tag == "hair") ? "hairf" : tag + "-front";
+            std::string back_tag  = (tag == "hair") ? "hairb" : tag + "-back";
+            split[0].tag = front_tag;
+            split[1].tag = back_tag;
+            parts[front_tag] = std::move(split[0]);
+            parts[back_tag]  = std::move(split[1]);
+        }
     }
 
     for (const char * tag : { "nose", "mouth" }) {
@@ -430,7 +446,10 @@ void further_extr_parts(std::map<std::string, Part> & parts, const Image & fullp
         // further into -l/-r variants when it finds two components), so the
         // clamp has to name every one of those or it silently no-ops and
         // leaves eye layers at their raw (often noisy-for-small-regions)
-        // marigold depth median, letting them sort behind the face.
+        // marigold depth median, letting them sort behind the face. If a
+        // caller's lr_split_tags excludes one of these tags (or PARTSEG_LR
+        // is off), the corresponding parts.find() lookups below simply miss
+        // and no-op -- same as any other missing tag, not a special case.
         for (const char * t : { "nose", "mouth",
                                  "eyewhite", "eyewhite-l", "eyewhite-r",
                                  "irides", "irides-l", "irides-r",

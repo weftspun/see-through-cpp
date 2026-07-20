@@ -989,7 +989,8 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
 
     // ---- heuristics + SVG/PNG assembly ----
     InpaintFn inpaint = make_lama_inpaint(cfg);
-    further_extr_parts(parts, fullpage, inpaint);
+    further_extr_parts(parts, fullpage, inpaint, cfg.partseg_flags,
+                       cfg.depth_split_tags, cfg.lr_split_tags);
 
     std::vector<const Part *> ordered;
     for (const auto & kv : parts) { ordered.push_back(&kv.second); }
