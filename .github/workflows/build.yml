@@ -114,11 +114,18 @@ jobs:
         shell: bash
         run: |
           command -v zstd >/dev/null || brew install zstd
-          gh release download v0.0.2-dev --repo weftspun/see-through-cpp --pattern "reference_bins.tar.zst" --dir /tmp/ref --clobber
+          mkdir -p /tmp/ref
+          # Plain curl straight at the browser_download_url instead of `gh
+          # release download` -- gh's own retry/backoff on the intermittent
+          # 503s from GitHub's release-asset CDN ("No server is currently
+          # available to service your request") isn't configurable, so it
+          # fails the job outright on the first blip. curl's --retry handles
+          # that transparently.
+          curl -fL --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
+            -o /tmp/ref/reference_bins.tar.zst \
+            "https://github.com/weftspun/see-through-cpp/releases/download/v0.0.2-dev/reference_bins.tar.zst"
           mkdir -p gen_reference
           zstd -dc /tmp/ref/reference_bins.tar.zst | tar -xf - -C gen_reference
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build scheduler/DDIM test binaries
         if: runner.os == 'macOS'
