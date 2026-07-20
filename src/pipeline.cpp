@@ -190,7 +190,7 @@ bool encode_tags(const PipelineConfig & cfg, const std::vector<std::string> & ta
             std::vector<int32_t> ids = tok.encode_padded(tags[f], 77, pad_id, &eos_pos);
             ggml_tensor * ids_t = nullptr;
             std::vector<std::vector<float>> outs;
-            bool ok = run_graph_dev(cfg, m, 8192,
+            bool ok = run_graph_dev(cfg, m, 24576,
                 [&]() {
                     ids_t = ggml_new_tensor_1d(m.ctx_g, GGML_TYPE_I32, 77);
                     ggml_set_input(ids_t);
@@ -252,7 +252,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         // through to plain vae_encode when RES already fits one tile.
         // Needs a much larger node budget: 16 tiles at res=1280, each
         // running the full encoder graph.
-        bool ok = run_graph_dev(cfg, mv, 98304,
+        bool ok = run_graph_dev(cfg, mv, 294912,
             [&]() {
                 x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
                 ggml_set_input(x);
@@ -291,7 +291,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         std::string p = cfg.model_dir + "/layerdiff-unet.gguf";
         if (!pipe_load(cfg, m, p, true)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
 
-        size_t max_nodes = 98304;
+        size_t max_nodes = 294912;
         size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
         ggml_init_params ip = { meta, nullptr, true };
         m.ctx_g = ggml_init(ip);
@@ -375,7 +375,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             std::vector<std::vector<float>> outs;
             // vae_decode_tiled multiplies node count ~16x at res=1280 (16
             // latent tiles, each running the full decoder) -- generous budget.
-            bool ok = run_graph_dev(cfg, mv, 131072,
+            bool ok = run_graph_dev(cfg, mv, 393216,
                 [&]() {
                     zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
@@ -460,7 +460,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
             // vae_encode_tiled: see the layerdiff page-latent comment above;
             // passes through to plain vae_encode when RES fits in one tile
             // (depth_res is usually <=512, but stay consistent/safe if not).
-            bool ok = run_graph_dev(cfg, mv, 98304,
+            bool ok = run_graph_dev(cfg, mv, 294912,
                 [&]() {
                     x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
                     ggml_set_input(x);
@@ -496,7 +496,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         std::vector<int32_t> ids = { tok.bos_id, tok.eos_id };
         ggml_tensor * ids_t = nullptr;
         std::vector<std::vector<float>> outs;
-        bool ok = run_graph_dev(cfg, m, 8192,
+        bool ok = run_graph_dev(cfg, m, 24576,
             [&]() {
                 ids_t = ggml_new_tensor_1d(m.ctx_g, GGML_TYPE_I32, 2);
                 ggml_set_input(ids_t);
@@ -523,7 +523,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         Model m;
         std::string p = cfg.model_dir + "/marigold-unet.gguf";
         if (!pipe_load(cfg, m, p, true)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
-        size_t max_nodes = 98304;
+        size_t max_nodes = 294912;
         size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
         ggml_init_params ip = { meta, nullptr, true };
         m.ctx_g = ggml_init(ip);
@@ -583,7 +583,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
             for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
             ggml_tensor * zt = nullptr;
             std::vector<std::vector<float>> outs;
-            bool ok = run_graph_dev(cfg, mv, 8192,
+            bool ok = run_graph_dev(cfg, mv, 24576,
                 [&]() {
                     zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
                     ggml_set_input(zt);
@@ -646,7 +646,7 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg_in) {
             for (int c = 0; c < 3; c++) feed[(size_t) c * P + i] = img.data[i * 3 + c];
             mfeed[i] = m4.data[i];
         }
-        bool ok = run_graph_dev(cfg, *model, 8192,
+        bool ok = run_graph_dev(cfg, *model, 24576,
             [&]() {
                 xi = ggml_new_tensor_4d(model->ctx_g, GGML_TYPE_F32, target, target, 3, 1);
                 xm = ggml_new_tensor_4d(model->ctx_g, GGML_TYPE_F32, target, target, 1, 1);

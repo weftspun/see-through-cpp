@@ -110,6 +110,14 @@ ggml_tensor * a_axis(ggml_context * ctx, ggml_tensor * X, int ax) {
 ggml_tensor * conv2d_winograd_3x3s1(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_tensor * w = m.get(pre + ".weight");   // [KW=3, KH=3, IC, OC]
     if (w->ne[0] != 3 || w->ne[1] != 3) { return nullptr; }
+    // the filter transform slices/adds/scales w directly (no im2col-style
+    // dequant step) -- quantized block formats aren't sliceable at the
+    // individual-element granularity that needs. Separately, the IC
+    // reduction (Mb, below) uses ggml_out_prod, whose Vulkan pipeline only
+    // has an F32 x F32 -> F32 variant. Either way, bail to plain F32 only
+    // and let the caller fall back to conv2d()'s existing (dequant/f16
+    // -capable) path.
+    if (w->type != GGML_TYPE_F32 || x->type != GGML_TYPE_F32) { return nullptr; }
 
     const int64_t W = x->ne[0], H = x->ne[1], IC = x->ne[2], N = x->ne[3];
     const int64_t OC = w->ne[3];

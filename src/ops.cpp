@@ -1,4 +1,5 @@
 #include "ops.h"
+#include "winograd.h"
 
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
@@ -107,40 +108,36 @@ ggml_tensor * bias4d(ggml_context * ctx, ggml_tensor * b) {
     return ggml_reshape_4d(ctx, b, 1, 1, b->ne[0], 1);
 }
 
-// im: im2col output [IC*K, OW, OH, N]; w: conv weight [KW, KH, IC, OC].
-// Returns [OW, OH, OC, N].
-//
-// Uses ggml_out_prod, not ggml_mul_mat, for the IC*K contraction. History:
-// this used to be ggml_mul_mat with the weight in the second operand
-// (mirroring ggml's own reference ggml_conv_2d) -- silently wrong two
-// different ways on Vulkan. (1) ggml_mul_mat's fused dequant kernels only
-// dispatch off the first operand's type, so a quantized weight in the
-// second operand gets fully re-dequantized to fp16 on every single call.
-// (2) independent of quantization, ggml-vulkan's mul_mat has a separate int8
-// fast path (quantize_y) that silently quantizes whichever operand is
-// SECOND to Q8_1 whenever the device supports VK_KHR_shader_integer_dot_product
-// and that operand's (ne0*ne1) % 4 == 0 -- true for most real conv shapes
-// (channel counts are near-universally multiples of 4) regardless of which
-// operand (weight or activations) ends up second, losing several percent of
-// precision with no per-op way to disable it (GGML_PREC_F32 only selects a
-// variant of the quantized pipeline, it doesn't skip quantization). Simply
-// swapping operand order (tried first) only moves the bug to the other
-// operand. ggml_out_prod is a separate op (GGML_OP_OUT_PROD) with its own
-// Vulkan dispatch that doesn't have this fast path at all -- root-caused and
-// verified via winograd.cpp's conv2d_winograd_3x3s1, an independent
-// im2col-free construction that matched a CPU ground truth exactly while
-// this call site (via ggml_mul_mat, either operand order) diverged by
-// several percent on the same Vulkan device at real channel counts.
+// Vulkan's ggml_mul_mat has a silent int8 fast path (quantize_y) that
+// quantizes the activation operand to Q8_1 whenever the device supports
+// VK_KHR_shader_integer_dot_product and that operand's (ne0*ne1)%4==0 --
+// true for nearly every conv/linear/attention shape here.
+// ggml_mul_mat_set_prec(GGML_PREC_F32) doesn't disable it, only selects a
+// variant of the already-quantized pipeline. An out_prod-based dodge (and,
+// for quantized/f16 weights where out_prod can't run at all, an explicit
+// F16 error-feedback residual pass) was tried and measured exact against a
+// CPU ground truth -- but per docs/decisions/0010-speedup-candidates.md,
+// applying it blanket to every matmul in the whole network cost ~7x on the
+// main UNet loop (108s -> 749s, real trace data), while MADR 0009 already
+// showed plain mul_mat + PREC_F32 (quantize_y's precision loss included)
+// produces a full, visually-coherent, 0.69-mean-IoU production run. The
+// precision loss is real but was never shown to be visible in output;
+// paying 7x for it isn't justified without a demonstrated regression.
+// Reverted to the MADR-0009-proven behavior. See git history / that MADR
+// for the out_prod/residual approach if a specific op site is later shown
+// to need it.
+static ggml_tensor * mul_mat_f32(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
+    ggml_tensor * r = ggml_mul_mat(ctx, a, b);
+    ggml_mul_mat_set_prec(r, GGML_PREC_F32);
+    return r;
+}
+
 static ggml_tensor * conv_mm(ggml_context * ctx, ggml_tensor * im, ggml_tensor * w) {
     ggml_tensor * im2d = ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]);  // [K, N*OH*OW]
     ggml_tensor * w2d  = ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]);        // [K, OC]
-    // out_prod contracts ne1, not ne0 like mul_mat -- permute both operands
-    // so K (the contraction) lands on ne1.
-    ggml_tensor * w2d_op  = ggml_cont(ctx, ggml_permute(ctx, w2d, 1, 0, 2, 3));    // [OC, K]
-    ggml_tensor * im2d_op = ggml_cont(ctx, ggml_permute(ctx, im2d, 1, 0, 2, 3));   // [N*OH*OW, K]
-    ggml_tensor * r = ggml_out_prod(ctx, w2d_op, im2d_op);                         // [OC, N*OH*OW]
-    r = ggml_reshape_4d(ctx, r, w->ne[3], im->ne[1], im->ne[2], im->ne[3]);        // [OC,OW,OH,N]
-    return ggml_cont(ctx, ggml_permute(ctx, r, 2, 0, 1, 3));                        // -> [OW,OH,OC,N]
+    ggml_tensor * r = mul_mat_f32(ctx, w2d, im2d);                                     // [OC, N*OH*OW]
+    r = ggml_reshape_4d(ctx, r, w->ne[3], im->ne[1], im->ne[2], im->ne[3]);            // [OC,OW,OH,N]
+    return ggml_cont(ctx, ggml_permute(ctx, r, 2, 0, 1, 3));                            // -> [OW,OH,OC,N]
 }
 
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int stride, int pad) {
@@ -197,6 +194,18 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
         if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
         return r;
     }
+    // Winograd F(2x2,3x3): only valid for the specific stride-1 pad-1 3x3
+    // case (conv2d_winograd_3x3s1 hardcodes that receptive field in its own
+    // im2col patch extraction, doesn't re-check stride/pad itself). Not
+    // wired into the conv_row_chunk/direct_conv branches above: this
+    // implementation processes the whole tensor in one shot (no row
+    // tiling), so using it there would reintroduce the VRAM blowup those
+    // paths exist to avoid at large (1280px) spatial sizes -- that needs a
+    // row-chunked Winograd variant or replacing ggml_conv_2d_direct
+    // specifically, neither done yet.
+    if (stride == 1 && pad == 1 && w->ne[0] == 3 && w->ne[1] == 3) {
+        if (ggml_tensor * r = conv2d_winograd_3x3s1(m, x, pre)) { return r; }
+    }
     // ggml_conv_2d unconditionally rounds activations to f16 in im2col; for
     // f32 weights (SDXL VAE encoder has activations too large for that) keep
     // the whole conv in f32 instead
@@ -221,29 +230,9 @@ ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & 
     return ggml_add(ctx, x, m.get(pre + ".bias"));
 }
 
-// Same-math replacement for ggml_mul_mat(a, b) (contracts ne0 of both,
-// result ne={a->ne1, b->ne1, b->ne2, b->ne3}), routed through ggml_out_prod
-// instead. ggml-vulkan's mul_mat has a silent int8 fast path (quantize_y)
-// that quantizes whichever operand is second to Q8_1 whenever the device
-// supports VK_KHR_shader_integer_dot_product and that operand's
-// (ne0*ne1)%4==0 -- true for nearly every real conv/attention/linear shape
-// in this codebase (channel counts and token counts are almost always
-// multiples of 4), losing several percent of precision with no per-op way
-// to disable it. out_prod is a separate op with its own Vulkan dispatch that
-// has no such fast path. Verified via tests/test_winograd_conv.cpp (conv),
-// test_linear_precision.cpp (linear), and test_attn_precision.cpp
-// (attention QK^T / softmax*V) against a CPU-backend ground truth.
-// out_prod contracts ne1 not ne0, so both operands get that axis permuted
-// to ne1 first (same math, ggml_can_out_prod requires equal ne1 sizes).
-static ggml_tensor * mul_mat_op(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
-    ggml_tensor * a_op = ggml_cont(ctx, ggml_permute(ctx, a, 1, 0, 2, 3));
-    ggml_tensor * b_op = ggml_cont(ctx, ggml_permute(ctx, b, 1, 0, 2, 3));
-    return ggml_out_prod(ctx, a_op, b_op);
-}
-
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_context * ctx = m.ctx_g;
-    ggml_tensor * y = mul_mat_op(ctx, m.get(pre + ".weight"), x);
+    ggml_tensor * y = mul_mat_f32(ctx, m.get(pre + ".weight"), x);
     if (m.has(pre + ".bias")) y = ggml_add(ctx, y, m.get(pre + ".bias"));
     return y;
 }
@@ -309,16 +298,16 @@ ggml_tensor * attn_block(Model & m, ggml_tensor * x, const std::string & pre) {
             ggml_tensor * qc = ggml_cont(ctx, ggml_view_4d(ctx, q, hd, t1 - t0, n_head, N,
                                                            q->nb[1], q->nb[2], q->nb[3],
                                                            t0 * q->nb[1]));
-            ggml_tensor * kqc = mul_mat_op(ctx, k, qc);             // (T, chunk, H, N)
+            ggml_tensor * kqc = mul_mat_f32(ctx, k, qc);             // (T, chunk, H, N)
             kqc = ggml_soft_max(ctx, ggml_scale(ctx, kqc, 1.0f / sqrtf((float) hd)));
-            ggml_tensor * chunk_kqv = mul_mat_op(ctx, v, kqc);      // (d, chunk, H, N)
+            ggml_tensor * chunk_kqv = mul_mat_f32(ctx, v, kqc);      // (d, chunk, H, N)
             acc = acc ? ggml_concat(ctx, acc, chunk_kqv, 1) : chunk_kqv;
         }
         kqv = acc;
     } else {
-        ggml_tensor * kq = mul_mat_op(ctx, k, q);                       // (T,T,H,N)
+        ggml_tensor * kq = mul_mat_f32(ctx, k, q);                       // (T,T,H,N)
         kq = ggml_soft_max(ctx, ggml_scale(ctx, kq, 1.0f / sqrtf((float) hd)));
-        kqv = mul_mat_op(ctx, v, kq);                                   // (d,T,H,N)
+        kqv = mul_mat_f32(ctx, v, kq);                                   // (d,T,H,N)
     }
     kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));       // (d,H,T,N)
     kqv = ggml_reshape_3d(ctx, kqv, C, T, N);                       // (C, T, N)
