@@ -4,13 +4,11 @@ Turns a single anime character illustration into up to 23 separate,
 fully-inpainted layers (hair, face, clothing, accessories, etc.) plus a
 depth map, saved as a layered SVG. C++/[ggml](https://github.com/ggml-org/ggml)
 port of [See-Through](https://github.com/weftspun/see-through)
-(Shitagaki Lab, SIGGRAPH 2026) — no PyTorch needed at runtime.
+(Shitagaki Lab, SIGGRAPH 2026).
 
 Requires a GPU with Vulkan support (no CPU fallback).
 
-## Run it
-
-**1. Get the weights** — download and unpack into a `models/` folder:
+## Get the weights — download and unpack into a `models/` folder:
 
 ```sh
 mkdir models && cd models
@@ -28,21 +26,27 @@ rm *.zst.part*
 (Or grab a prebuilt release binary instead of building — see
 [Releases](../../releases).)
 
-**2. Build:**
+## Build (Vulkan backend must be enabled explicitly — it's off by default in ggml):
 
 ```sh
-cmake -B build -G Ninja && cmake --build build
+cmake -B build -G Ninja -DGGML_VULKAN=ON && cmake --build build
 ```
 
-**3. Run:**
+## Run:
 
 ```sh
 ./build/see-through -m models -i in.png -o out.svg
 ```
 
+Input is loaded via [stb_image](https://github.com/nothings/stb), so PNG, JPEG,
+BMP, TGA, GIF, and PSD are supported — **not WebP**; convert first (e.g.
+`ffmpeg -i in.webp in.png`).
+
 Produces `out.svg` — one `<image>` element per layer, each with a
 `data-tag`/`data-z`/`data-depth-median` attribute. Useful flags:
 
 - `--steps 30` / `--res 1280` / `--depth-res 768` — quality/speed knobs
+  (`--res 768` is noticeably faster with little quality loss — a good
+  default while iterating)
 - `--png-dir <dir>` — also export each layer as a separate PNG
 - `--seed 42` — for reproducible output
