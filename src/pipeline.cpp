@@ -922,6 +922,35 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
                 if (!layerdiff_pass(cfg, head_rgb, ehs2, pooled2, 1, head_layers)) { s.ok = false; return false; }
             }
 
+            // reproject each head layer to the fullpage canvas
+            const int ch = head_crop.h, cw = head_crop.w;
+            int py1 = (int) (hp_y / scale), py2 = (int) ((hp_y + ch) / scale);
+            int px1 = (int) (hp_x / scale), px2 = (int) ((hp_x + cw) / scale);
+            int sw = (int) (hp_w / scale), sh = (int) (hp_h / scale);
+
+            {
+                // one span carrying every geometry value used to place the
+                // head-pass output back onto the RES x RES page canvas, as
+                // attributes -- inspect via profiling/spans.jsonl instead
+                // of ad-hoc printf (name="debug.head_geom").
+                SpanScope g(result, trace_id, root.span_id(), "debug.head_geom", cfg.verbose, cfg.spans_path, {
+                    { "hx0", std::to_string(hx0) }, { "hy0", std::to_string(hy0) },
+                    { "hw", std::to_string(hw) }, { "hh", std::to_string(hh) },
+                    { "res", std::to_string(RES) },
+                    { "x1", std::to_string(x1) }, { "y1", std::to_string(y1) },
+                    { "x2", std::to_string(x2) }, { "y2", std::to_string(y2) },
+                    { "input_w", std::to_string(input.w) }, { "input_h", std::to_string(input.h) },
+                    { "head_crop_w", std::to_string(x2 - x1) }, { "head_crop_h", std::to_string(y2 - y1) },
+                    { "scale", std::to_string(scale) },
+                    { "hx1", std::to_string(hx1) }, { "hy1", std::to_string(hy1) },
+                    { "hp_w", std::to_string(hp_w) }, { "hp_h", std::to_string(hp_h) },
+                    { "hp_x", std::to_string(hp_x) }, { "hp_y", std::to_string(hp_y) },
+                    { "py1", std::to_string(py1) }, { "py2", std::to_string(py2) },
+                    { "px1", std::to_string(px1) }, { "px2", std::to_string(px2) },
+                    { "sw", std::to_string(sw) }, { "sh", std::to_string(sh) },
+                });
+            }
+
             if (!cfg.debug_dir.empty()) {
                 for (size_t t = 0; t < HEAD_TAGS_V3.size(); t++) {
                     Image & hl = head_layers[t];
@@ -931,19 +960,16 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
                         if (a > 15.0f / 255.0f) cnt++;
                         amax = std::max(amax, a);
                     }
-                    printf("[debug] raw head_layers[%s]: w=%d h=%d alpha_max=%.4f pixels>15/255=%d\n",
-                           HEAD_TAGS_V3[t].c_str(), hl.w, hl.h, amax, cnt);
+                    SpanScope s(result, trace_id, root.span_id(), "debug.raw_head_layer", cfg.verbose, cfg.spans_path, {
+                        { "tag", HEAD_TAGS_V3[t] }, { "w", std::to_string(hl.w) }, { "h", std::to_string(hl.h) },
+                        { "alpha_max", std::to_string(amax) }, { "pixels_gt_15_255", std::to_string(cnt) },
+                    });
                     std::ofstream f(cfg.debug_dir + "/raw_head_" + HEAD_TAGS_V3[t] + ".png", std::ios::binary);
                     std::vector<uint8_t> png = encode_png(hl);
                     f.write(reinterpret_cast<const char *>(png.data()), (std::streamsize) png.size());
                 }
             }
 
-            // reproject each head layer to the fullpage canvas
-            const int ch = head_crop.h, cw = head_crop.w;
-            int py1 = (int) (hp_y / scale), py2 = (int) ((hp_y + ch) / scale);
-            int px1 = (int) (hp_x / scale), px2 = (int) ((hp_x + cw) / scale);
-            int sw = (int) (hp_w / scale), sh = (int) (hp_h / scale);
             for (size_t t = 0; t < HEAD_TAGS_V3.size(); t++) {
                 Image & hl = head_layers[t];
                 for (size_t i = 0; i < head_alpha.size(); i++) { hl.data[i * 4 + 3] *= head_alpha[i]; }
@@ -967,29 +993,18 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     for (auto & kv : v3_layers) { alpha_floor(kv.second); }
 
     if (!cfg.debug_dir.empty()) {
-        // temporary: dump one full, UNCROPPED layer to see the raw alpha
-        // spatial distribution before crop_part's bbox tightens it
-        auto it = v3_layers.find("topwear");
-        if (it != v3_layers.end()) {
-            std::ofstream f(cfg.debug_dir + "/raw_topwear_full.png", std::ios::binary);
-            std::vector<uint8_t> png = encode_png(it->second);
-            f.write(reinterpret_cast<const char *>(png.data()), (std::streamsize) png.size());
-            printf("[debug] dumped raw uncropped topwear layer (%dx%d)\n",
-                   it->second.w, it->second.h);
-        }
-        for (const char * tag : { "face", "nose", "mouth", "headwear" }) {
+        for (const char * tag : { "topwear", "face", "nose", "mouth", "headwear" }) {
             auto it2 = v3_layers.find(tag);
             if (it2 == v3_layers.end()) continue;
             Image & im = it2->second;
-            int cnt10 = 0, cnt15 = 0; float amax = 0;
-            for (size_t i = 0; i < (size_t) im.w * im.h; i++) {
-                float a = im.data[i * 4 + 3];
-                if (a > 10.0f / 255.0f) cnt10++;
-                if (a > 15.0f / 255.0f) cnt15++;
-                amax = std::max(amax, a);
-            }
-            printf("[debug] post-reproject v3_layers[%s]: w=%d h=%d alpha_max=%.4f "
-                   "pixels>10/255=%d pixels>15/255=%d\n", tag, im.w, im.h, amax, cnt10, cnt15);
+            int bx = 0, by = 0, bw = 0, bh = 0;
+            bool found = bbox_alpha(im, 10.0f / 255.0f, &bx, &by, &bw, &bh);
+            SpanScope s(result, trace_id, root.span_id(), "debug.postreproj_layer", cfg.verbose, cfg.spans_path, {
+                { "tag", tag }, { "w", std::to_string(im.w) }, { "h", std::to_string(im.h) },
+                { "bbox_found", found ? "1" : "0" },
+                { "bbox_x", std::to_string(bx) }, { "bbox_y", std::to_string(by) },
+                { "bbox_w", std::to_string(bw) }, { "bbox_h", std::to_string(bh) },
+            });
             std::ofstream f2(cfg.debug_dir + "/postreproj_" + std::string(tag) + ".png", std::ios::binary);
             std::vector<uint8_t> png2 = encode_png(im);
             f2.write(reinterpret_cast<const char *>(png2.data()), (std::streamsize) png2.size());
