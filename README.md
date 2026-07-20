@@ -45,7 +45,7 @@ BMP, TGA, GIF, and PSD are supported — **not WebP**; convert first (e.g.
 Produces `out.svg` — one `<image>` element per layer, each with a
 `data-tag`/`data-z`/`data-depth-median` attribute. Useful flags:
 
-- `--steps 30` / `--res 1280` / `--depth-res 768` — quality/speed knobs
+- `--steps 30` / `--res 768` / `--depth-res 768` — quality/speed knobs
   (`--res 768` is noticeably faster with little quality loss — a good
   default while iterating)
 - `--png-dir <dir>` — also export each layer as a separate PNG
