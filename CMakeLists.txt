@@ -92,14 +92,6 @@ add_library(see_through_c SHARED src/see_through_capi.cpp)
 target_link_libraries(see_through_c PRIVATE seethrough)
 target_compile_definitions(see_through_c PRIVATE ST2_BUILD_DLL)
 
-add_executable(see-through-server src/server.cpp)
-target_link_libraries(see-through-server PRIVATE see_through_c)
-target_include_directories(see-through-server PRIVATE src third_party/cpp-httplib)
-if (WIN32)
-    target_link_libraries(see-through-server PRIVATE ws2_32 crypt32)
-endif()
-
-
 foreach(t test_trans_vae test_sd_vae test_trans_vae_full test_clip test_vae_encode test_vae_encode_160 test_vae_encode_tiled test_vae_decode_tiled test_unet_blocks test_unet_forward test_unet_forward_160 test_scheduler test_layerdiff_e2e test_layerdiff_e2e_160 test_ddim test_marigold_e2e test_lama graph_mem)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE seethrough)
@@ -205,24 +197,4 @@ if (SEETHROUGH_BUILD_H3_SERVER)
             -Wno-error=int-conversion)
     endif()
     target_link_libraries(see-through-server-h3 PRIVATE see_through_c picoquic_vendored)
-
-    # dev-only test client (vendored picoquic reference CLI, client mode) --
-    # not part of the product, just for exercising see-through-server-h3
-    # without a real browser/H3 client on hand
-    add_executable(picoquicdemo_client
-        third_party/picoquic/picoquicfirst/picoquicdemo.c
-        third_party/picoquic/picoquicfirst/getopt.c
-        third_party/picoquic/picohttp/demoserver.c)
-    target_compile_definitions(picoquicdemo_client PRIVATE ${PICOQUIC_DEFS})
-    target_include_directories(picoquicdemo_client PRIVATE ${VENDOR_QUIC_INCLUDES}
-        third_party/picoquic/picoquicfirst)
-    if (WIN32 AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC"))
-        target_compile_options(picoquicdemo_client PRIVATE
-            "SHELL:-include stdlib.h" "SHELL:-include malloc.h"
-            "SHELL:-include Winsock2.h" "SHELL:-include ws2tcpip.h"
-            -Wno-error=incompatible-pointer-types
-            -Wno-error=implicit-function-declaration
-            -Wno-error=int-conversion)
-    endif()
-    target_link_libraries(picoquicdemo_client PRIVATE picoquic_vendored)
 endif()
