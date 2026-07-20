@@ -12,6 +12,7 @@
 #include "ggml-cpu.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -728,8 +729,57 @@ static std::string safe_id(const std::string & tag) {
     return s;
 }
 
+static uint64_t now_unix_nano() {
+    using namespace std::chrono;
+    return (uint64_t) duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+// RAII span: starts timing at construction, emits a completed Span into
+// `result.spans` at destruction -- so a span closes on every scope exit
+// (normal fall-through, a `return false` on any failure path, or an
+// exception) without a matching manual t0/t1/add_span call at each one.
+// Wrap a stage's code in `{ SpanScope s(...); ...stage...; }`.
+class SpanScope {
+public:
+    SpanScope(SeeThroughResult & result, std::string trace_id, std::string parent_id, std::string name,
+              std::vector<std::pair<std::string, std::string>> attrs = {})
+        : result_(result), trace_id_(std::move(trace_id)), parent_id_(std::move(parent_id)),
+          name_(std::move(name)), attrs_(std::move(attrs)), t0_(now_unix_nano()) {}
+    ~SpanScope() {
+        Span s;
+        s.trace_id = trace_id_;
+        s.span_id = span_id_;
+        s.parent_span_id = parent_id_;
+        s.name = name_;
+        s.start_time_unix_nano = t0_;
+        s.end_time_unix_nano = now_unix_nano();
+        s.status_code = ok ? 1 : 2;   // OK / ERROR
+        s.attributes = attrs_;
+        result_.spans.push_back(std::move(s));
+    }
+    const std::string & span_id() const { return span_id_; }
+    bool ok = true;   // set false before scope exit to mark this span an error
+private:
+    SeeThroughResult & result_;
+    std::string trace_id_, parent_id_, name_;
+    std::string span_id_ = generate_span_id();
+    std::vector<std::pair<std::string, std::string>> attrs_;
+    uint64_t t0_;
+};
+
 bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThroughResult & result) {
+    const std::string trace_id = generate_trace_id();
+    // root span: constructed first, destructed last (any return path,
+    // success or failure) -- covers the whole run without a matching
+    // end-of-function block.
+    SpanScope root(result, trace_id, "", "run", {
+        { "res", std::to_string(cfg.res) }, { "steps", std::to_string(cfg.steps) },
+        { "depth_res", std::to_string(cfg.depth_res) }, { "depth_steps", std::to_string(cfg.depth_steps) },
+        { "device", cfg.device }, { "seed", std::to_string(cfg.seed) },
+    });
+
     if (cfg.device == "cpu") {
+        root.ok = false;
         // Fail before any (multi-GB) model loading happens, not partway
         // through the first graph compute -- see pipe_backend().
         fprintf(stderr, "error: --device cpu is not supported -- this build is GPU"
@@ -772,9 +822,15 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
 
     // ---- layerdiff pass 1: body ----
     std::vector<float> ehs, pooled;
-    if (!encode_tags(cfg, BODY_TAGS_V3, ehs, pooled)) { return false; }
+    {
+        SpanScope s(result, trace_id, root.span_id(), "clip.body");
+        if (!encode_tags(cfg, BODY_TAGS_V3, ehs, pooled)) { s.ok = false; return false; }
+    }
     std::vector<Image> body_layers;
-    if (!layerdiff_pass(cfg, page_rgb, ehs, pooled, 0, body_layers)) { return false; }
+    {
+        SpanScope s(result, trace_id, root.span_id(), "layerdiff.body");
+        if (!layerdiff_pass(cfg, page_rgb, ehs, pooled, 0, body_layers)) { s.ok = false; return false; }
+    }
 
     std::vector<float> pre_mul_alpha5;   // snapshot before the page_alpha multiply
     if (!cfg.debug_dir.empty() && body_layers.size() > 5) {
@@ -854,9 +910,15 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
             }
 
             std::vector<float> ehs2, pooled2;
-            if (!encode_tags(cfg, HEAD_TAGS_V3, ehs2, pooled2)) { return false; }
+            {
+                SpanScope s(result, trace_id, root.span_id(), "clip.head");
+                if (!encode_tags(cfg, HEAD_TAGS_V3, ehs2, pooled2)) { s.ok = false; return false; }
+            }
             std::vector<Image> head_layers;
-            if (!layerdiff_pass(cfg, head_rgb, ehs2, pooled2, 1, head_layers)) { return false; }
+            {
+                SpanScope s(result, trace_id, root.span_id(), "layerdiff.head");
+                if (!layerdiff_pass(cfg, head_rgb, ehs2, pooled2, 1, head_layers)) { s.ok = false; return false; }
+            }
 
             // reproject each head layer to the fullpage canvas
             const int ch = head_crop.h, cw = head_crop.w;
@@ -931,9 +993,12 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     v2_list.push_back(page_entry);
 
     std::vector<Image> depths;
-    if (!marigold_depth(cfg, v2_list, depths)) { return false; }
-    for (Image & d : depths) {
-        if (d.w != RES) { d = smart_resize(d, RES, RES); }
+    {
+        SpanScope s(result, trace_id, root.span_id(), "marigold");
+        if (!marigold_depth(cfg, v2_list, depths)) { s.ok = false; return false; }
+        for (Image & d : depths) {
+            if (d.w != RES) { d = smart_resize(d, RES, RES); }
+        }
     }
 
     // ---- assign depths to v3 parts (compose depth_local reconstruction) ----
@@ -947,47 +1012,71 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
         crop_part(p);
         if (p.img.w > 0) { parts[tag] = std::move(p); }
     };
+
+    // upstream apply_marigold "depth_local": a tag's own per-layer marigold
+    // decode is only reliable where that content is actually visible in the
+    // composited page -- pixels also claimed by another tag (occl[i], from
+    // the shared blended_alpha) are occluded/hallucinated there, so their
+    // raw per-layer depth estimate is noise; replace it with the median of
+    // this same tag's own visible-region depth instead of trusting it.
+    auto depth_local = [&](const Image & sub, const Image & depth, const std::vector<uint8_t> & occl) {
+        Image dl;
+        dl.w = dl.h = RES; dl.c = 1;
+        dl.data.assign((size_t) RES * RES, 1.0f);
+        std::vector<float> visible;
+        for (size_t i = 0; i < dl.data.size(); i++) {
+            bool local = sub.data[i * 4 + 3] > 15.0f / 255.0f;
+            if (local) {
+                dl.data[i] = std::min(1.0f, std::max(0.0f, depth.data[i]));
+                if (!occl[i]) { visible.push_back(dl.data[i]); }
+            }
+        }
+        std::sort(visible.begin(), visible.end());
+        float med = visible.empty() ? 1.0f : visible[visible.size() / 2];
+        for (size_t i = 0; i < dl.data.size(); i++) {
+            bool local = sub.data[i * 4 + 3] > 15.0f / 255.0f;
+            if (local && occl[i]) { dl.data[i] = med; }
+        }
+        return dl;
+    };
+
+    std::vector<uint8_t> occl_base((size_t) RES * RES, 0);
+    for (size_t i = 0; i < occl_base.size(); i++) { occl_base[i] = blended_alpha[i] > 256.0f / 255.0f ? 1 : 0; }
+
     for (size_t v = 0; v < VALID_BODY_PARTS_V2.size(); v++) {
         const std::string & tag = VALID_BODY_PARTS_V2[v];
         const Image & depth = depths[v];
         auto cit = COMPOSE.find(tag);
         if (cit == COMPOSE.end()) {
+            // standalone tag: single depth_local pass against the shared
+            // base occlusion mask (this tag has no further/back subs of its
+            // own to progressively reveal, so there's nothing to mutate).
             auto it = v3_layers.find(tag);
-            if (it != v3_layers.end()) { make_part(tag, it->second, depth); }
+            if (it != v3_layers.end()) {
+                Image dl = depth_local(it->second, depth, occl_base);
+                make_part(tag, it->second, dl);
+            }
             continue;
         }
-        // per-sub-tag depth_local: reverse order, occluded regions get the
-        // visible-region median (upstream apply_marigold)
-        std::vector<uint8_t> occl((size_t) RES * RES, 0);
-        for (size_t i = 0; i < occl.size(); i++) { occl[i] = blended_alpha[i] > 256.0f / 255.0f ? 1 : 0; }
+        // composed tag (hair/eyes): reverse sub order, each sub's own
+        // pixels get marked occluded for subsequent (further-back) subs in
+        // the same group, cascading from the shared base mask.
+        std::vector<uint8_t> occl = occl_base;
         std::vector<std::string> subs = cit->second;
         for (auto sit = subs.rbegin(); sit != subs.rend(); ++sit) {
             auto it = v3_layers.find(*sit);
             if (it == v3_layers.end()) { continue; }
             const Image & sub = it->second;
-            Image dl;
-            dl.w = dl.h = RES; dl.c = 1;
-            dl.data.assign((size_t) RES * RES, 1.0f);
-            std::vector<float> visible;
-            for (size_t i = 0; i < dl.data.size(); i++) {
-                bool local = sub.data[i * 4 + 3] > 15.0f / 255.0f;
-                if (local) {
-                    dl.data[i] = std::min(1.0f, std::max(0.0f, depth.data[i]));
-                    if (!occl[i]) { visible.push_back(dl.data[i]); }
-                }
-            }
-            std::sort(visible.begin(), visible.end());
-            float med = visible.empty() ? 1.0f : visible[visible.size() / 2];
-            for (size_t i = 0; i < dl.data.size(); i++) {
-                bool local = sub.data[i * 4 + 3] > 15.0f / 255.0f;
-                if (local && occl[i]) { dl.data[i] = med; }
-                if (local) { occl[i] = 1; }
+            Image dl = depth_local(sub, depth, occl);
+            for (size_t i = 0; i < occl.size(); i++) {
+                if (sub.data[i * 4 + 3] > 15.0f / 255.0f) { occl[i] = 1; }
             }
             make_part(*sit, sub, dl);
         }
     }
 
     // ---- heuristics + SVG/PNG assembly ----
+    SpanScope postproc(result, trace_id, root.span_id(), "postproc");
     InpaintFn inpaint = make_lama_inpaint(cfg);
     further_extr_parts(parts, fullpage, inpaint, cfg.partseg_flags,
                        cfg.depth_split_tags, cfg.lr_split_tags);
@@ -1035,5 +1124,9 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     }
     svg += "  </g>\n</svg>\n";
     result.svg = std::move(svg);
+
+    // `root` (constructed at the top of this function) and `postproc` both
+    // emit their spans here via RAII as the function returns -- no manual
+    // end-of-function span bookkeeping needed.
     return true;
 }

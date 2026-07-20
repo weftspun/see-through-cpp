@@ -5,6 +5,7 @@
 #pragma once
 
 #include "image_utils.h"
+#include "otel_jsonl.h"
 #include "postproc.h"
 
 #include <cstdint>
@@ -26,7 +27,12 @@ struct PipelineConfig {
 
     // further_extr_parts heuristic control (see postproc.h PartsegFlags)
     unsigned partseg_flags = PARTSEG_DEPTH | PARTSEG_LR;
-    std::vector<std::string> depth_split_tags = { "hair" };
+    // "topwear" defaults in too: garments with a draped/trailing portion
+    // (e.g. a sash extending behind the legs) decode as one tag with two
+    // genuinely different depths: front-body vs. the hallucinated occluded
+    // drape. Left unsplit, that averages into one wrong mid-value; splitting
+    // gives each its own honest depth_median (2026-07-19 field report).
+    std::vector<std::string> depth_split_tags = { "hair", "topwear" };
     std::vector<std::string> lr_split_tags = {
         "handwear", "eyewhite", "irides", "eyelash", "eyebrow", "ears"
     };
@@ -63,5 +69,10 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg);
 struct SeeThroughResult {
     std::string svg;
     std::vector<std::pair<std::string, std::vector<uint8_t>>> png_layers;
+    // OTel-style spans (root "run" span + one child per pipeline stage), for
+    // the profiling data lake (see otel_jsonl.h) -- timed here rather than
+    // left to external profilers (e.g. samply) so every run can log stage
+    // timings without needing ETW/admin privileges.
+    std::vector<Span> spans;
 };
 bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThroughResult & result);

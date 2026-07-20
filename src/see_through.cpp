@@ -103,5 +103,13 @@ int main(int argc, char ** argv) {
     std::ofstream svg(out_path);
     svg << result.svg;
     printf("wrote %s (%zu layers)\n", out_path.c_str(), result.png_layers.size());
+
+    std::string spans_path = "profiling/spans.jsonl";
+    std::filesystem::create_directories("profiling");
+    if (write_spans_jsonl(spans_path, result.spans)) {
+        printf("appended %zu spans to %s\n", result.spans.size(), spans_path.c_str());
+    } else {
+        fprintf(stderr, "warning: failed to write profiling spans\n");
+    }
     return 0;
 }
