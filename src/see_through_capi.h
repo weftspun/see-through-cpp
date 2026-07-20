@@ -37,11 +37,12 @@ typedef struct st_render_result {
 } st_render_result;
 
 // Renders one encoded image (anything stb_image can decode: PNG/JPEG/etc.)
-// into a layered SVG. `device` is "auto" (first GPU, hard error if none and
-// device isn't explicitly "cpu"), "vulkan", or "cpu". Returns 0 on success;
-// nonzero on failure (bad image, model load failure, or a pipeline stage
-// returning false) with *out left zero-initialized. On success, the caller
-// must release *out via st_free_result exactly once.
+// into a layered SVG. `device` is "auto" or "vulkan" (both select the first
+// GPU; hard error if none found) -- GPU-only, "cpu" is rejected outright.
+// Returns 0 on success; nonzero on failure (bad image, unsupported device,
+// model load failure, or a pipeline stage returning false) with *out left
+// zero-initialized. On success, the caller must release *out via
+// st_free_result exactly once.
 ST2_API int st_render(const char * model_dir, const uint8_t * image_data, size_t image_len,
                       int steps, int res, int depth_res, uint64_t seed, const char * device,
                       st_render_result * out);

@@ -32,7 +32,7 @@ int main(int argc, char ** argv) {
     if (in_path.empty()) {
         fprintf(stderr, "usage: see-through -m <model-dir> -i in.png -o out.psd "
                         "[--seed N] [--steps N] [--res N] [--depth-res N] [--threads N] "
-                        "[--device cpu|vulkan]\n");
+                        "[--device vulkan] (GPU-only; --device cpu is not supported)\n");
         return 1;
     }
     setvbuf(stdout, nullptr, _IONBF, 0);

@@ -1,7 +1,7 @@
 // Pipeline stages for the see-through CLI: CLIP tag encoding, the
 // apply_layerdiff v3 two-pass diffusion (body + head crop), the Marigold
-// depth stage, and PSD assembly. CPU-first; each stage loads and frees its
-// own weights.
+// depth stage, and PSD assembly. GPU (Vulkan)-only; each stage loads and
+// frees its own weights.
 #pragma once
 
 #include "image_utils.h"
@@ -21,7 +21,7 @@ struct PipelineConfig {
     uint64_t seed = 42;
     int  threads = 8;
     bool verbose = true;
-    std::string device = "auto";  // "auto"/"vulkan" = first GPU, "cpu" = fallback
+    std::string device = "auto";  // "auto"/"vulkan" = first GPU. GPU-only: "cpu" is rejected, not a fallback.
     std::string debug_dir;        // when set: dump per-stage stats + frames
 };
 
