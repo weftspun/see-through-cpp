@@ -2,8 +2,8 @@
 
 Turns a single anime character illustration into up to 23 separate,
 fully-inpainted layers (hair, face, clothing, accessories, etc.) plus a
-depth map, saved as a layered SVG. C++/[ggml](https://github.com/ggml-org/ggml)
-port of [See-Through](https://github.com/weftspun/see-through)
+depth map, saved as a layered SVG. C++
+port of [See-Through](https://github.com/shitagaki-lab/see-through)
 (Shitagaki Lab, SIGGRAPH 2026).
 
 Requires a GPU with Vulkan support (no CPU fallback).
