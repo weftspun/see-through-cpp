@@ -58,7 +58,8 @@ bool encode_tags(const PipelineConfig & cfg, const std::vector<std::string> & ta
 // RGBA layers at page resolution. group_index selects the group embeddings.
 bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                     const std::vector<float> & ehs, const std::vector<float> & pooled,
-                    int group_index, std::vector<Image> & layers_out);
+                    int group_index, std::vector<Image> & layers_out,
+                    const std::vector<std::string> & tags = {});
 
 // stage 3: Marigold depth for a layer list (last entry = fullpage);
 // depths_out matches layers in [0,1]

@@ -160,6 +160,14 @@ static bool run_graph_dev(const PipelineConfig & cfg, Model & m, size_t max_node
 // stage 1: text encoding
 // ---------------------------------------------------------------------------
 
+// semantic identifier shared by --png-dir filenames, debug dumps, and the
+// SVG's per-layer <image id="..."> attributes (e.g. ThorVG lookup by id)
+static std::string safe_id(const std::string & tag) {
+    std::string s = tag;
+    std::replace(s.begin(), s.end(), ' ', '_');
+    return s;
+}
+
 bool encode_tags(const PipelineConfig & cfg, const std::vector<std::string> & tags,
                  std::vector<float> & ehs, std::vector<float> & pooled) {
     const int F = (int) tags.size();
@@ -214,7 +222,8 @@ bool encode_tags(const PipelineConfig & cfg, const std::vector<std::string> & ta
 
 bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                     const std::vector<float> & ehs, const std::vector<float> & pooled,
-                    int group_index, std::vector<Image> & layers_out) {
+                    int group_index, std::vector<Image> & layers_out,
+                    const std::vector<std::string> & tags) {
     const int RES = page_rgb.w, ZR = RES / 8;
     const int F = (int) pooled.size() / 1280;
     const float SCALE = 0.13025f;
@@ -392,8 +401,19 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                     rmax = std::max(rmax, (double) im.data[i * 4]);
                     amax = std::max(amax, (double) im.data[i * 4 + 3]);
                 }
-                printf("[debug] frame %d decoded rgb_max=%.4f alpha_max=%.4f\n", f, rmax, amax);
-                save_image(cfg.debug_dir + "/frame_" + std::to_string(f) + ".png", im);
+                // named by the actual tag (falls back to a group/index pair
+                // only if no tag list was passed in): layerdiff_pass runs
+                // once for the body pass (F=13) and once for the head pass
+                // (F=11) with the SAME cfg.debug_dir -- an unqualified
+                // "frame_N" name let the head pass's decode silently
+                // overwrite the body pass's frame_0..frame_10 dumps, which
+                // once produced a misleading debug artifact (a dump
+                // labeled like body-pass "back hair" that was actually
+                // stale head-pass "face" data).
+                std::string tag_id = (f < (int) tags.size())
+                    ? safe_id(tags[f]) : ("group" + std::to_string(group_index) + "_" + std::to_string(f));
+                printf("[debug] %s decoded rgb_max=%.4f alpha_max=%.4f\n", tag_id.c_str(), rmax, amax);
+                save_image(cfg.debug_dir + "/decode_" + tag_id + ".png", im);
             }
             if (cfg.verbose) { printf("[layerdiff] decode %d/%d\r", f + 1, F); fflush(stdout); }
         }
@@ -700,6 +720,66 @@ static bool bbox_alpha(const Image & img, float thr, int * x, int * y, int * w, 
     return true;
 }
 
+// like bbox_alpha, but robust to sparse outlier pixels (e.g. a stray
+// corner artifact in a diffusion model's raw output): standard "denoise
+// via largest connected component" (upstream already relies on
+// cv2.connectedComponentsWithStats for other mask cleanup, e.g.
+// inference_utils.py's remove_small_regions-style calls, just never
+// applied it to this head-bbox call). 4-connected flood fill, keep only
+// the biggest component's bbox. Validated against a real corrupted case:
+// the real head region was ~15500px vs. a ~46px corner artifact -- no
+// need for anything fancier (e.g. pre-dilating to merge fragments) until
+// a real case actually demonstrates single components aren't enough.
+static bool bbox_alpha_largest_cc(const Image & img, float thr, int * x, int * y, int * w, int * h) {
+    const int W = img.w, H = img.h;
+    std::vector<uint8_t> mask((size_t) W * H, 0);
+    for (int yy = 0; yy < H; yy++) {
+        for (int xx = 0; xx < W; xx++) {
+            if (img.px(xx, yy)[3] > thr) { mask[(size_t) yy * W + xx] = 1; }
+        }
+    }
+    std::vector<int32_t> label((size_t) W * H, -1);
+    int best_x0 = 0, best_y0 = 0, best_x1 = -1, best_y1 = -1;
+    size_t best_size = 0;
+    std::vector<int> stack;
+    for (int yy = 0; yy < H; yy++) {
+        for (int xx = 0; xx < W; xx++) {
+            size_t idx0 = (size_t) yy * W + xx;
+            if (!mask[idx0] || label[idx0] >= 0) { continue; }
+            int cx0 = xx, cy0 = yy, cx1 = xx, cy1 = yy;
+            size_t csize = 0;
+            stack.clear();
+            stack.push_back(xx); stack.push_back(yy);
+            label[idx0] = 1;
+            while (!stack.empty()) {
+                int cy = stack.back(); stack.pop_back();
+                int cx = stack.back(); stack.pop_back();
+                csize++;
+                cx0 = std::min(cx0, cx); cy0 = std::min(cy0, cy);
+                cx1 = std::max(cx1, cx); cy1 = std::max(cy1, cy);
+                static const int ddx[4] = { 1, -1, 0, 0 };
+                static const int ddy[4] = { 0, 0, 1, -1 };
+                for (int d = 0; d < 4; d++) {
+                    int nx = cx + ddx[d], ny = cy + ddy[d];
+                    if (nx < 0 || nx >= W || ny < 0 || ny >= H) { continue; }
+                    size_t nidx = (size_t) ny * W + nx;
+                    if (mask[nidx] && label[nidx] < 0) {
+                        label[nidx] = 1;
+                        stack.push_back(nx); stack.push_back(ny);
+                    }
+                }
+            }
+            if (csize > best_size) {
+                best_size = csize;
+                best_x0 = cx0; best_y0 = cy0; best_x1 = cx1; best_y1 = cy1;
+            }
+        }
+    }
+    if (best_size == 0) { return false; }
+    *x = best_x0; *y = best_y0; *w = best_x1 - best_x0 + 1; *h = best_y1 - best_y0 + 1;
+    return true;
+}
+
 // base64 (no line wrapping, standard alphabet)
 static std::string b64_encode(const std::vector<uint8_t> & d) {
     static const char * T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -713,14 +793,6 @@ static std::string b64_encode(const std::vector<uint8_t> & d) {
         o += i + 2 < d.size() ? T[v & 63] : '=';
     }
     return o;
-}
-
-// semantic identifier shared by --png-dir filenames and the SVG's per-layer
-// <image id="..."> attributes (e.g. ThorVG lookup by id)
-static std::string safe_id(const std::string & tag) {
-    std::string s = tag;
-    std::replace(s.begin(), s.end(), ' ', '_');
-    return s;
 }
 
 static uint64_t now_unix_nano() {
@@ -831,7 +903,7 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     std::vector<Image> body_layers;
     {
         SpanScope s(result, trace_id, root.span_id(), "layerdiff.body", cfg.verbose, cfg.spans_path);
-        if (!layerdiff_pass(cfg, page_rgb, ehs, pooled, 0, body_layers)) { s.ok = false; return false; }
+        if (!layerdiff_pass(cfg, page_rgb, ehs, pooled, 0, body_layers, BODY_TAGS_V3)) { s.ok = false; return false; }
     }
 
     std::vector<float> pre_mul_alpha5;   // snapshot before the page_alpha multiply
@@ -869,7 +941,7 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     {
         const Image & head = body_layers[2];
         int hx0, hy0, hw, hh;
-        if (!bbox_alpha(head, 15.0f / 255.0f, &hx0, &hy0, &hw, &hh)) {
+        if (!bbox_alpha_largest_cc(head, 15.0f / 255.0f, &hx0, &hy0, &hw, &hh)) {
             fprintf(stderr, "no head region found — skipping head pass\n");
         } else {
             // map to original-image coords (upstream apply_layerdiff v3)
@@ -919,7 +991,7 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
             std::vector<Image> head_layers;
             {
                 SpanScope s(result, trace_id, root.span_id(), "layerdiff.head", cfg.verbose, cfg.spans_path);
-                if (!layerdiff_pass(cfg, head_rgb, ehs2, pooled2, 1, head_layers)) { s.ok = false; return false; }
+                if (!layerdiff_pass(cfg, head_rgb, ehs2, pooled2, 1, head_layers, HEAD_TAGS_V3)) { s.ok = false; return false; }
             }
 
             // reproject each head layer to the fullpage canvas
