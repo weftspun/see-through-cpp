@@ -1,6 +1,7 @@
 *.gguf
 *.safetensors
 models/
+models-q4/
 ggufs/
 __pycache__/
 build/
