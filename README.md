@@ -2,7 +2,7 @@
 
 Turns a single anime character illustration into up to 23 separate,
 fully-inpainted layers (hair, face, clothing, accessories, etc.) plus a
-depth map, saved as a layered PSD. C++/[ggml](https://github.com/ggml-org/ggml)
+depth map, saved as a layered SVG. C++/[ggml](https://github.com/ggml-org/ggml)
 port of [See-Through](https://github.com/weftspun/see-through)
 (Shitagaki Lab, SIGGRAPH 2026) — no PyTorch needed at runtime.
 
@@ -37,11 +37,11 @@ cmake -B build -G Ninja && cmake --build build
 **3. Run:**
 
 ```sh
-./build/see-through -m models -i in.png -o out.psd
+./build/see-through -m models -i in.png -o out.svg
 ```
 
-Produces `out.psd` (the layers), `out_depth.psd`, and `out.psd.json`
-(bounding box + depth per layer). Useful flags:
+Produces `out.svg` — one `<image>` element per layer, each with a
+`data-tag`/`data-z`/`data-depth-median` attribute. Useful flags:
 
 - `--steps 30` / `--res 1280` / `--depth-res 768` — quality/speed knobs
 - `--png-dir <dir>` — also export each layer as a separate PNG
