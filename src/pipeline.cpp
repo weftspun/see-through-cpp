@@ -140,38 +140,6 @@ static bool run_graph_dev(const PipelineConfig & cfg, Model & m, size_t max_node
     return ok;
 }
 
-template <typename Build, typename SetInputs>
-static bool run_graph(Model & m, size_t max_nodes, int threads, Build build,
-                      SetInputs set_inputs, std::vector<std::vector<float>> & outs) {
-    size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
-    ggml_init_params ip = { meta, nullptr, true };
-    m.ctx_g = ggml_init(ip);
-    std::vector<ggml_tensor *> out_t = build();
-    for (ggml_tensor * t : out_t) ggml_set_output(t);
-    ggml_backend_t backend = ggml_backend_cpu_init();
-    ggml_backend_cpu_set_n_threads(backend, threads);
-    ggml_cgraph * gf = ggml_new_graph_custom(m.ctx_g, max_nodes, false);
-    for (ggml_tensor * t : out_t) ggml_build_forward_expand(gf, t);
-    ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-    bool ok = ggml_gallocr_alloc_graph(alloc, gf);
-    if (ok) {
-        set_inputs();
-        ok = ggml_backend_graph_compute(backend, gf) == GGML_STATUS_SUCCESS;
-    }
-    if (ok) {
-        outs.resize(out_t.size());
-        for (size_t i = 0; i < out_t.size(); i++) {
-            outs[i].resize(ggml_nelements(out_t[i]));
-            ggml_backend_tensor_get(out_t[i], outs[i].data(), 0, outs[i].size() * 4);
-        }
-    }
-    ggml_gallocr_free(alloc);
-    ggml_backend_free(backend);
-    ggml_free(m.ctx_g);
-    m.ctx_g = nullptr;
-    return ok;
-}
-
 // ---------------------------------------------------------------------------
 // stage 1: text encoding
 // ---------------------------------------------------------------------------
@@ -603,14 +571,17 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
 // LaMa callback
 // ---------------------------------------------------------------------------
 
-InpaintFn make_lama_inpaint(const PipelineConfig & cfg) {
+InpaintFn make_lama_inpaint(const PipelineConfig & cfg_in) {
     auto model = std::make_shared<Model>();
+    PipelineConfig cfg = cfg_in;
     std::string path = cfg.model_dir + "/lama.gguf";
-    int threads = cfg.threads;
-    return [model, path, threads](const Image & rgb, const std::vector<uint8_t> & mask) -> Image {
-        if (model->weights.empty() && !model->load(path.c_str())) {
-            fprintf(stderr, "failed to load %s - skipping inpaint\n", path.c_str());
-            return rgb;
+    return [model, cfg, path](const Image & rgb, const std::vector<uint8_t> & mask) -> Image {
+        if (model->weights.empty()) {
+            if (!pipe_load(cfg, *model, path)) {
+                fprintf(stderr, "failed to load %s - skipping inpaint\n", path.c_str());
+                return rgb;
+            }
+            lama_prepare_gpu_weights(*model);   // one-time: see lama.h
         }
         // upstream inpaint_preprocess: resize <=1024 stride 64, square pad
         int W = rgb.w, H = rgb.h;
@@ -626,6 +597,7 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg) {
         for (float & v : m4.data) v = v < 0.5f ? 0.0f : 1.0f;
 
         ggml_tensor * xi = nullptr, * xm = nullptr;
+        LamaExtraInputs extra;
         std::vector<std::vector<float>> outs;
         std::vector<float> feed((size_t) target * target * 3), mfeed((size_t) target * target);
         const size_t P = (size_t) target * target;
@@ -633,17 +605,18 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg) {
             for (int c = 0; c < 3; c++) feed[(size_t) c * P + i] = img.data[i * 3 + c];
             mfeed[i] = m4.data[i];
         }
-        bool ok = run_graph(*model, 8192, threads,
+        bool ok = run_graph_dev(cfg, *model, 8192,
             [&]() {
                 xi = ggml_new_tensor_4d(model->ctx_g, GGML_TYPE_F32, target, target, 3, 1);
                 xm = ggml_new_tensor_4d(model->ctx_g, GGML_TYPE_F32, target, target, 1, 1);
                 ggml_set_input(xi);
                 ggml_set_input(xm);
-                return std::vector<ggml_tensor *>{ lama_inpaint_graph(*model, xi, xm) };
+                return std::vector<ggml_tensor *>{ lama_inpaint_graph(*model, xi, xm, &extra) };
             },
             [&]() {
                 ggml_backend_tensor_set(xi, feed.data(), 0, feed.size() * 4);
                 ggml_backend_tensor_set(xm, mfeed.data(), 0, mfeed.size() * 4);
+                lama_set_extra_inputs(extra, target);
             },
             outs);
         if (!ok) return rgb;
@@ -742,9 +715,11 @@ static uint64_t now_unix_nano() {
 class SpanScope {
 public:
     SpanScope(SeeThroughResult & result, std::string trace_id, std::string parent_id, std::string name,
+              bool verbose, const std::string & spans_path = {},
               std::vector<std::pair<std::string, std::string>> attrs = {})
         : result_(result), trace_id_(std::move(trace_id)), parent_id_(std::move(parent_id)),
-          name_(std::move(name)), attrs_(std::move(attrs)), t0_(now_unix_nano()) {}
+          name_(std::move(name)), attrs_(std::move(attrs)), verbose_(verbose), spans_path_(spans_path),
+          t0_(now_unix_nano()) {}
     ~SpanScope() {
         Span s;
         s.trace_id = trace_id_;
@@ -755,6 +730,10 @@ public:
         s.end_time_unix_nano = now_unix_nano();
         s.status_code = ok ? 1 : 2;   // OK / ERROR
         s.attributes = attrs_;
+        if (verbose_) { printf("%s\n", span_to_json(s).c_str()); fflush(stdout); }
+        // write+flush now, not batched until the run ends -- see
+        // PipelineConfig::spans_path.
+        if (!spans_path_.empty()) { write_span_jsonl(spans_path_, s); }
         result_.spans.push_back(std::move(s));
     }
     const std::string & span_id() const { return span_id_; }
@@ -764,6 +743,8 @@ private:
     std::string trace_id_, parent_id_, name_;
     std::string span_id_ = generate_span_id();
     std::vector<std::pair<std::string, std::string>> attrs_;
+    bool verbose_;
+    std::string spans_path_;
     uint64_t t0_;
 };
 
@@ -772,7 +753,7 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     // root span: constructed first, destructed last (any return path,
     // success or failure) -- covers the whole run without a matching
     // end-of-function block.
-    SpanScope root(result, trace_id, "", "run", {
+    SpanScope root(result, trace_id, "", "run", cfg.verbose, cfg.spans_path, {
         { "res", std::to_string(cfg.res) }, { "steps", std::to_string(cfg.steps) },
         { "depth_res", std::to_string(cfg.depth_res) }, { "depth_steps", std::to_string(cfg.depth_steps) },
         { "device", cfg.device }, { "seed", std::to_string(cfg.seed) },
@@ -823,12 +804,12 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     // ---- layerdiff pass 1: body ----
     std::vector<float> ehs, pooled;
     {
-        SpanScope s(result, trace_id, root.span_id(), "clip.body");
+        SpanScope s(result, trace_id, root.span_id(), "clip.body", cfg.verbose, cfg.spans_path);
         if (!encode_tags(cfg, BODY_TAGS_V3, ehs, pooled)) { s.ok = false; return false; }
     }
     std::vector<Image> body_layers;
     {
-        SpanScope s(result, trace_id, root.span_id(), "layerdiff.body");
+        SpanScope s(result, trace_id, root.span_id(), "layerdiff.body", cfg.verbose, cfg.spans_path);
         if (!layerdiff_pass(cfg, page_rgb, ehs, pooled, 0, body_layers)) { s.ok = false; return false; }
     }
 
@@ -911,12 +892,12 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
 
             std::vector<float> ehs2, pooled2;
             {
-                SpanScope s(result, trace_id, root.span_id(), "clip.head");
+                SpanScope s(result, trace_id, root.span_id(), "clip.head", cfg.verbose, cfg.spans_path);
                 if (!encode_tags(cfg, HEAD_TAGS_V3, ehs2, pooled2)) { s.ok = false; return false; }
             }
             std::vector<Image> head_layers;
             {
-                SpanScope s(result, trace_id, root.span_id(), "layerdiff.head");
+                SpanScope s(result, trace_id, root.span_id(), "layerdiff.head", cfg.verbose, cfg.spans_path);
                 if (!layerdiff_pass(cfg, head_rgb, ehs2, pooled2, 1, head_layers)) { s.ok = false; return false; }
             }
 
@@ -994,7 +975,7 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
 
     std::vector<Image> depths;
     {
-        SpanScope s(result, trace_id, root.span_id(), "marigold");
+        SpanScope s(result, trace_id, root.span_id(), "marigold", cfg.verbose, cfg.spans_path);
         if (!marigold_depth(cfg, v2_list, depths)) { s.ok = false; return false; }
         for (Image & d : depths) {
             if (d.w != RES) { d = smart_resize(d, RES, RES); }
@@ -1076,19 +1057,30 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     }
 
     // ---- heuristics + SVG/PNG assembly ----
-    SpanScope postproc(result, trace_id, root.span_id(), "postproc");
+    SpanScope postproc(result, trace_id, root.span_id(), "postproc", cfg.verbose, cfg.spans_path);
     InpaintFn inpaint = make_lama_inpaint(cfg);
     further_extr_parts(parts, fullpage, inpaint, cfg.partseg_flags,
                        cfg.depth_split_tags, cfg.lr_split_tags);
 
     std::vector<const Part *> ordered;
     for (const auto & kv : parts) { ordered.push_back(&kv.second); }
-    std::sort(ordered.begin(), ordered.end(),
-              [](const Part * a, const Part * b) { return a->depth_median > b->depth_median; });
+    // stable_sort: any remaining depth_median ties (should be rare after
+    // postproc.cpp's clamp-ladder fix, but not impossible from raw marigold
+    // output) fall back to `parts`' std::map key order deterministically,
+    // instead of std::sort's unspecified tie-break.
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const Part * a, const Part * b) { return a->depth_median > b->depth_median; });
 
+    // encode each part's color PNG exactly once -- result.png_layers and the
+    // SVG's base64 <image> embed used to each call encode_png() separately,
+    // silently doubling PNG-encode cost across every layer (a real chunk of
+    // the ~92s postproc stage measured in profiling/spans.jsonl).
     result.png_layers.clear();
+    std::vector<std::vector<uint8_t>> part_pngs;
+    part_pngs.reserve(ordered.size());
     for (const Part * p : ordered) {
-        result.png_layers.emplace_back(safe_id(p->tag), encode_png(p->img));
+        part_pngs.push_back(encode_png(p->img));
+        result.png_layers.emplace_back(safe_id(p->tag), part_pngs.back());
     }
 
     // layered SVG: document order = z order (back to front); depth maps in
@@ -1098,8 +1090,9 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     svg += "xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"" + std::to_string(RES)
          + "\" height=\"" + std::to_string(RES) + "\">\n";
     int zi = 0;
-    for (const Part * p : ordered) {
-        std::string png = b64_encode(encode_png(p->img));
+    for (size_t oi = 0; oi < ordered.size(); oi++) {
+        const Part * p = ordered[oi];
+        std::string png = b64_encode(part_pngs[oi]);
         svg += "  <image id=\"" + safe_id(p->tag) + "\" x=\"" + std::to_string(p->xyxy[0])
              + "\" y=\"" + std::to_string(p->xyxy[1])
              + "\" width=\"" + std::to_string(p->img.w) + "\" height=\"" + std::to_string(p->img.h)

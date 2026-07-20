@@ -25,3 +25,6 @@ demo_ticket_store.bin
 _index.html
 /in.png
 /out_default.svg
+traces_in/
+profiling/
+/traces_*

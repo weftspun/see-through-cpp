@@ -450,21 +450,42 @@ void further_extr_parts(std::map<std::string, Part> & parts, const Image & fullp
         // caller's lr_split_tags excludes one of these tags (or PARTSEG_LR
         // is off), the corresponding parts.find() lookups below simply miss
         // and no-op -- same as any other missing tag, not a special case.
-        for (const char * t : { "nose", "mouth",
-                                 "eyewhite", "eyewhite-l", "eyewhite-r",
-                                 "irides", "irides-l", "irides-r",
-                                 "eyelash", "eyelash-l", "eyelash-r",
-                                 "eyebrow", "eyebrow-l", "eyebrow-r" }) {
+        // Clamped tags used to all collapse onto the SAME depth_median
+        // (face_median - 0.001), which erased their relative depth signal:
+        // the final sort (pipeline.cpp) then had to break ties among
+        // identically-valued parts, and since it used std::sort (not
+        // stable), that tie-break was unspecified rather than reflecting
+        // any real front/back relationship -- it only happened to look like
+        // "alphabetical by tag name" because it rode on parts' pre-sort
+        // std::map key order. Give each tag in the clamp group a distinct
+        // offset instead, ordered back-to-front by anatomy: eyewhite (base
+        // of the eye) is furthest back, eyebrow is frontmost; nose/mouth
+        // don't overlap the eye stack so their relative slot doesn't matter
+        // visually, but still gets a distinct value for determinism.
+        const char * clamp_order[] = {
+            "eyewhite", "eyewhite-l", "eyewhite-r",
+            "irides", "irides-l", "irides-r",
+            "eyelash", "eyelash-l", "eyelash-r",
+            "eyebrow", "eyebrow-l", "eyebrow-r",
+            "nose", "mouth",
+        };
+        const double eps = 1e-4;
+        int rank = 0;
+        for (const char * t : clamp_order) {
             auto it = parts.find(t);
             if (it != parts.end() && it->second.depth_median > face->second.depth_median) {
-                it->second.depth_median = face->second.depth_median - 0.001;
+                it->second.depth_median = face->second.depth_median - 0.001 - rank * eps;
             }
+            rank++;
         }
-        for (const char * t : { "earr", "earl", "ears" }) {
+        const char * ear_order[] = { "ears", "earl", "earr" };
+        rank = 0;
+        for (const char * t : ear_order) {
             auto it = parts.find(t);
             if (it != parts.end()) {
-                it->second.depth_median = face->second.depth_median + 0.001;
+                it->second.depth_median = face->second.depth_median + 0.001 + rank * eps;
             }
+            rank++;
         }
     }
 }

@@ -91,7 +91,25 @@ inline std::string span_to_json(const Span & s) {
     return j;
 }
 
-// appends one JSON line per span to `path` (created if missing)
+// appends and flushes exactly one span line to `path` (created if missing).
+// Called from SpanScope's destructor as each span closes, so a run's spans
+// hit disk incrementally -- a crash or hang mid-run still leaves every span
+// completed so far on disk, instead of losing them all to an end-of-process
+// batch write.
+inline bool write_span_jsonl(const std::string & path, const Span & s) {
+    FILE * f = std::fopen(path.c_str(), "a");
+    if (!f) return false;
+    std::string line = span_to_json(s) + "\n";
+    bool ok = std::fwrite(line.data(), 1, line.size(), f) == line.size();
+    std::fflush(f);
+    std::fclose(f);
+    return ok;
+}
+
+// appends one JSON line per span to `path` (created if missing) -- batch
+// form, kept for callers (e.g. library/API consumers) that collect spans in
+// memory and want one write; the CLI uses the incremental write_span_jsonl
+// above instead.
 inline bool write_spans_jsonl(const std::string & path, const std::vector<Span> & spans) {
     FILE * f = std::fopen(path.c_str(), "a");
     if (!f) return false;
@@ -99,6 +117,7 @@ inline bool write_spans_jsonl(const std::string & path, const std::vector<Span> 
         std::string line = span_to_json(s) + "\n";
         if (std::fwrite(line.data(), 1, line.size(), f) != line.size()) { std::fclose(f); return false; }
     }
+    std::fflush(f);
     std::fclose(f);
     return true;
 }

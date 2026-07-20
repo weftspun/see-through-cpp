@@ -83,6 +83,12 @@ int main(int argc, char ** argv) {
     if (!load_image(in_path, input)) { fprintf(stderr, "failed to load %s\n", in_path.c_str()); return 1; }
     printf("input: %dx%d\n", input.w, input.h);
 
+    // set before run_see_through(): spans are appended + flushed to this
+    // file as each one closes (see PipelineConfig::spans_path), not
+    // batched until the run ends -- the directory has to exist first.
+    cfg.spans_path = "profiling/spans.jsonl";
+    std::filesystem::create_directories("profiling");
+
     SeeThroughResult result;
     if (!run_see_through(cfg, input, result)) { return 1; }
 
@@ -103,13 +109,9 @@ int main(int argc, char ** argv) {
     std::ofstream svg(out_path);
     svg << result.svg;
     printf("wrote %s (%zu layers)\n", out_path.c_str(), result.png_layers.size());
-
-    std::string spans_path = "profiling/spans.jsonl";
-    std::filesystem::create_directories("profiling");
-    if (write_spans_jsonl(spans_path, result.spans)) {
-        printf("appended %zu spans to %s\n", result.spans.size(), spans_path.c_str());
-    } else {
-        fprintf(stderr, "warning: failed to write profiling spans\n");
-    }
+    // result.spans were already appended + flushed to cfg.spans_path
+    // incrementally as each closed (see run_see_through) -- no batch write
+    // needed here.
+    printf("%zu spans written to %s\n", result.spans.size(), cfg.spans_path.c_str());
     return 0;
 }
