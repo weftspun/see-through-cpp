@@ -56,7 +56,7 @@ std::string render_to_json(const std::string & model_dir, const std::string & im
     st_render_result r;
     int rc = st_render(model_dir.c_str(),
                        reinterpret_cast<const uint8_t *>(image_bytes.data()), image_bytes.size(),
-                       30, 1280, 768, 42, "auto", &r);
+                       30, 768, 768, 42, "auto", &r);
     if (rc != 0) {
         return "{\"error\":\"pipeline failed (code " + std::to_string(rc) + ")\"}";
     }

@@ -48,8 +48,8 @@ upstream's `dump_parts_psd`.
 Useful flags:
 
 - `--steps 30` / `--res 768` / `--depth-res 768` — quality/speed knobs
-  (`--res 768` is noticeably faster with little quality loss — a good
-  default while iterating)
+  (`768` is the default for both; bump `--res` up to `1280` for sharper
+  output at a noticeably higher time cost)
 - `--png-dir <dir>` — also export each layer as a separate PNG
 - `--seed 42` — for reproducible output
 - `--no-split-depth` / `--no-split-lr` — disable the depth-cluster
