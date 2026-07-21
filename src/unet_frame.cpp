@@ -5,34 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-// Same math as ggml_mul_mat(a, b) (contracts ne0 of both, result ne =
-// {a->ne1, b->ne1, b->ne2, b->ne3}), routed through ggml_out_prod instead.
-// ggml-vulkan's mul_mat has a silent int8 fast path (quantize_y) that
-// quantizes whichever operand is second to Q8_1 whenever the device
-// supports VK_KHR_shader_integer_dot_product and that operand's
-// (ne0*ne1)%4==0 -- true for nearly every real attention shape here (token
-// counts are almost always multiples of 4), losing several percent of
-// precision with GGML_PREC_F32 unable to disable it (ops.cpp's
-// mul_mat_f32, reverted commit 4e4156e). out_prod is a separate op with its
-// own Vulkan dispatch that has no such fast path -- proven exact against a
-// CPU-backend ground truth via tests/test_attn_precision.cpp. Unlike
-// ops.cpp's conv_mm/linear (reverted back to plain mul_mat_f32 because
-// applying this blanket-everywhere cost ~7x), attn_tokens never even had
-// the PREC_F32 fallback -- SEETHROUGH_ATTN_OUTPROD applies the exact fix
-// scoped to just token attention (self/cross/temporal, not every conv/
-// linear in the network) for A/B measurement.
-static ggml_tensor * mul_mat_op(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
-    ggml_tensor * a_op = ggml_cont(ctx, ggml_permute(ctx, a, 1, 0, 2, 3));
-    ggml_tensor * b_op = ggml_cont(ctx, ggml_permute(ctx, b, 1, 0, 2, 3));
-    return ggml_out_prod(ctx, a_op, b_op);
-}
-
-static bool use_attn_outprod() {
-    static int cached = -1;
-    if (cached < 0) { cached = getenv("SEETHROUGH_ATTN_OUTPROD") ? 1 : 0; }
-    return cached != 0;
-}
-
 ggml_tensor * attn_tokens(Model & m, ggml_tensor * q_src, ggml_tensor * kv_src,
                           const std::string & pre, int n_head) {
     ggml_context * ctx = m.ctx_g;
@@ -67,9 +39,9 @@ ggml_tensor * attn_tokens(Model & m, ggml_tensor * q_src, ggml_tensor * kv_src,
             ggml_tensor * qc = ggml_cont(ctx, ggml_view_4d(ctx, q, hd, t1 - t0, n_head, B,
                                                            q->nb[1], q->nb[2], q->nb[3],
                                                            t0 * q->nb[1]));
-            ggml_tensor * kq = use_attn_outprod() ? mul_mat_op(ctx, k, qc) : ggml_mul_mat(ctx, k, qc);   // (Tk, chunk, H, B)
+            ggml_tensor * kq = ggml_mul_mat(ctx, k, qc);   // (Tk, chunk, H, B)
             kq = ggml_soft_max(ctx, kq);
-            ggml_tensor * chunk_kqv = use_attn_outprod() ? mul_mat_op(ctx, v, kq) : ggml_mul_mat(ctx, v, kq); // (hd, chunk, H, B)
+            ggml_tensor * chunk_kqv = ggml_mul_mat(ctx, v, kq); // (hd, chunk, H, B)
             acc = acc ? ggml_concat(ctx, acc, chunk_kqv, 1) : chunk_kqv;
         }
         kqv = ggml_cont(ctx, ggml_permute(ctx, acc, 0, 2, 1, 3));  // (hd,H,Tq,B)
@@ -89,9 +61,9 @@ ggml_tensor * attn_tokens(Model & m, ggml_tensor * q_src, ggml_tensor * kv_src,
         q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, q, hd, n_head, Tq, B), 0, 2, 1, 3)); // (hd,Tq,H,B)
         k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, k, hd, n_head, Tk, B), 0, 2, 1, 3));
         v = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, Tk, B), 1, 2, 0, 3)); // (Tk,hd,H,B)
-        ggml_tensor * kq = use_attn_outprod() ? mul_mat_op(ctx, k, q) : ggml_mul_mat(ctx, k, q);                    // (Tk,Tq,H,B)
+        ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                    // (Tk,Tq,H,B)
         kq = ggml_soft_max(ctx, kq);
-        kqv = use_attn_outprod() ? mul_mat_op(ctx, v, kq) : ggml_mul_mat(ctx, v, kq);                                // (hd,Tq,H,B)
+        kqv = ggml_mul_mat(ctx, v, kq);                                // (hd,Tq,H,B)
         kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));      // (hd,H,Tq,B)
         kqv = ggml_reshape_3d(ctx, kqv, C, Tq, B);
     }
