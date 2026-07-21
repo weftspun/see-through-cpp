@@ -2063,6 +2063,18 @@ class vk_perf_logger {
             name += "(" + std::to_string(node->ne[0]) + "," + std::to_string(node->ne[1]) + "," + std::to_string(node->ne[2]) + "," + std::to_string(node->ne[3]) + ")";
             return fusion_str + name;
         }
+        // local diagnostic (see-through): ADD/GROUP_NORM aggregated into one
+        // line each hid which shapes dominate; split by dst shape + src1
+        // broadcast-ness so the perf log attributes them.
+        if (node->op == GGML_OP_ADD || node->op == GGML_OP_GROUP_NORM || node->op == GGML_OP_CONT) {
+            std::string name = ggml_op_name(node->op);
+            name += "(" + std::to_string(node->ne[0]) + "," + std::to_string(node->ne[1]) + "," + std::to_string(node->ne[2]) + "," + std::to_string(node->ne[3]) + ")";
+            if (node->op == GGML_OP_ADD && node->src[1] && !ggml_are_same_shape(node->src[0], node->src[1])) {
+                name += " bcast";
+            }
+            if (node->src[0] && !ggml_is_contiguous(node->src[0])) { name += " nc0"; }
+            return fusion_str + name;
+        }
         if (node->op == GGML_OP_FLASH_ATTN_EXT) {
             const ggml_tensor * dst = node;
             const ggml_tensor * q = node->src[0];

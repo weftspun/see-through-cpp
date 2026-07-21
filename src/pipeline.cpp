@@ -447,32 +447,63 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         if (pipe_gpu(cfg)) mv.conv_row_chunk = true;   // exact im2col, row-tiled
 
         layers_out.assign(F, Image{});
-        // Build + allocate the (fixed-shape) decode graph ONCE and reuse it
-        // for all F frames: the per-frame run_graph_dev pattern rebuilt and
-        // re-allocated a ~393k-node graph 13 (body) + 11 (head) times per
-        // run, pure CPU-side churn (MADR 0010 candidate 4).
+        // Frames decoded per-frame (NB=1) through one reused graph.
+        // SEETHROUGH_DECODE_BATCH=N batches N frames per graph -- TRIED AND
+        // REJECTED as the default (2026-07-20): batch=4 measured SLOWER end
+        // to end (5m52s vs 5m06s; the 4x-larger intermediates slowed the
+        // whole head stage 130s->168s, so the per-dispatch overhead it
+        // amortizes was already hidden behind GPU pipelining) and drifted
+        // small layers (eyebrow IoU 0.909 -- batch width changes GEMM
+        // tiling and thus accumulation order). Kept only as an experiment
+        // knob; the decoder's largest per-frame f32 intermediate (~512MB)
+        // also caps any batch at ~8 before hitting Vulkan's ~4.29GB
+        // maxStorageBufferRange.
         size_t max_nodes = 393216;
-        size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
-        ggml_init_params ip = { meta, nullptr, true };
-        mv.ctx_g = ggml_init(ip);
-        ggml_tensor * zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
-        ggml_set_input(zt);
-        ggml_tensor * dec_out = trans_vae_decode(mv, zt);
-        ggml_set_output(dec_out);
+        int NB = 1;
+        if (const char * e = getenv("SEETHROUGH_DECODE_BATCH")) NB = std::max(1, atoi(e));
         ggml_backend_t backend = pipe_backend(cfg);
-        ggml_cgraph * gf = ggml_new_graph_custom(mv.ctx_g, max_nodes, false);
-        ggml_build_forward_expand(gf, dec_out);
-        ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-        if (!ggml_gallocr_alloc_graph(alloc, gf)) { fprintf(stderr, "decode alloc failed\n"); return false; }
+        struct DecGraph {
+            ggml_context * ctx = nullptr;
+            ggml_tensor * zt = nullptr, * out = nullptr;
+            ggml_cgraph * gf = nullptr;
+            ggml_gallocr_t alloc = nullptr;
+        };
+        std::map<int, DecGraph> graphs;   // batch size -> prepared graph
+        auto get_graph = [&](int nb) -> DecGraph * {
+            auto it = graphs.find(nb);
+            if (it != graphs.end()) { return &it->second; }
+            DecGraph g;
+            size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
+            ggml_init_params ip = { meta, nullptr, true };
+            g.ctx = ggml_init(ip);
+            mv.ctx_g = g.ctx;
+            g.zt = ggml_new_tensor_4d(g.ctx, GGML_TYPE_F32, ZR, ZR, 4, nb);
+            ggml_set_input(g.zt);
+            g.out = trans_vae_decode(mv, g.zt);
+            ggml_set_output(g.out);
+            g.gf = ggml_new_graph_custom(g.ctx, max_nodes, false);
+            ggml_build_forward_expand(g.gf, g.out);
+            g.alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+            if (!ggml_gallocr_alloc_graph(g.alloc, g.gf)) {
+                fprintf(stderr, "decode alloc failed (batch %d)\n", nb);
+                return nullptr;
+            }
+            return &graphs.emplace(nb, g).first->second;
+        };
         std::vector<std::vector<float>> outs(1);
-        outs[0].resize(ggml_nelements(dec_out));
-        for (int f = 0; f < F; f++) {
-            std::vector<float> z(DZ);
-            for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
-            ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4);
-            bool ok = ggml_backend_graph_compute(backend, gf) == GGML_STATUS_SUCCESS;
-            if (ok) ggml_backend_tensor_get(dec_out, outs[0].data(), 0, outs[0].size() * 4);
-            if (!ok) return false;
+        for (int f0 = 0; f0 < F; f0 += NB) {
+            const int nb = std::min(NB, F - f0);
+            DecGraph * g = get_graph(nb);
+            if (!g) { return false; }
+            std::vector<float> z((size_t) nb * DZ);
+            for (size_t i = 0; i < z.size(); i++) z[i] = lat[(size_t) f0 * DZ + i] / SCALE;
+            ggml_backend_tensor_set(g->zt, z.data(), 0, z.size() * 4);
+            if (ggml_backend_graph_compute(backend, g->gf) != GGML_STATUS_SUCCESS) { return false; }
+            outs[0].resize(ggml_nelements(g->out));
+            ggml_backend_tensor_get(g->out, outs[0].data(), 0, outs[0].size() * 4);
+            for (int fb = 0; fb < nb; fb++) {
+            const int f = f0 + fb;
+            const size_t frame_off = (size_t) fb * RES * RES * 4;
             // planar RGBA -> interleaved RGBA
             Image & im = layers_out[f];
             im.w = im.h = RES; im.c = 4;
@@ -480,8 +511,8 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             const size_t P = (size_t) RES * RES;
             // TransparentVAE output is ARGB planar: ch0 = alpha, ch1..3 = RGB
             for (size_t i = 0; i < P; i++) {
-                for (int c = 0; c < 3; c++) im.data[i * 4 + c] = outs[0][(size_t) (c + 1) * P + i];
-                im.data[i * 4 + 3] = outs[0][i];
+                for (int c = 0; c < 3; c++) im.data[i * 4 + c] = outs[0][frame_off + (size_t) (c + 1) * P + i];
+                im.data[i * 4 + 3] = outs[0][frame_off + i];
             }
             if (!cfg.debug_dir.empty()) {
                 double amax = 0, rmax = 0;
@@ -504,11 +535,14 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
                 save_image(cfg.debug_dir + "/decode_" + tag_id + ".png", im);
             }
             if (cfg.verbose) { printf("[layerdiff] decode %d/%d\r", f + 1, F); fflush(stdout); }
+            }   // fb
         }
         if (cfg.verbose) printf("\n");
-        ggml_gallocr_free(alloc);
+        for (auto & kv : graphs) {
+            ggml_gallocr_free(kv.second.alloc);
+            ggml_free(kv.second.ctx);
+        }
         pipe_backend_release(backend);
-        ggml_free(mv.ctx_g);
         mv.ctx_g = nullptr;
     }
     return true;
