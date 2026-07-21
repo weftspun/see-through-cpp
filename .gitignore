@@ -38,3 +38,5 @@ golden_output.psd
 /t1_*
 reference_output.psd
 /out_*
+/out.psd
+/out.psd.json
