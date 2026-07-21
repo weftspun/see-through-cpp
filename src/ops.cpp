@@ -1,5 +1,4 @@
 #include "ops.h"
-#include "winograd.h"
 
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
@@ -219,28 +218,6 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
         ggml_tensor * r = ggml_conv_2d_direct(ctx, w, x, stride, stride, pad, pad, 1, 1);
         if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
         return r;
-    }
-    // Winograd F(2x2,3x3): only valid for the specific stride-1 pad-1 3x3
-    // case (conv2d_winograd_3x3s1 hardcodes that receptive field in its own
-    // im2col patch extraction, doesn't re-check stride/pad itself). Not
-    // wired into the conv_row_chunk/direct_conv branches above: this
-    // implementation processes the whole tensor in one shot (no row
-    // tiling), so using it there would reintroduce the VRAM blowup those
-    // paths exist to avoid at large (1280px) spatial sizes -- that needs a
-    // row-chunked Winograd variant or replacing ggml_conv_2d_direct
-    // specifically, neither done yet.
-    //
-    // OPT-IN only (SEETHROUGH_WINOGRAD=1): verified exact, but measured
-    // SLOWER than plain im2col+mul_mat at production shapes. Its
-    // composition (16 batch=1 ggml_out_prod calls + add/sub/concat/cont
-    // transform trees per conv) made OUT_PROD alone 24% of a TransparentVAE
-    // decode graph and exploded node counts (~33k CONTs/graph) -- the
-    // theoretical 2.25x FLOP saving never survived the op-count and
-    // out_prod-kernel overhead (GGML_VK_PERF_LOGGER, 2026-07-20). Revisit
-    // only as a fused kernel, not an op composition.
-    if (getenv("SEETHROUGH_WINOGRAD") &&
-        stride == 1 && pad == 1 && w->ne[0] == 3 && w->ne[1] == 3) {
-        if (ggml_tensor * r = conv2d_winograd_3x3s1(m, x, pre)) { return r; }
     }
     // ggml_conv_2d unconditionally rounds activations to f16 in im2col; for
     // f32 weights (SDXL VAE encoder has activations too large for that) keep
