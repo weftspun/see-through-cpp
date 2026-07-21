@@ -32,6 +32,19 @@ std::vector<uint8_t> planar8(const Image & img, int x0, int y0, int x1, int y1, 
 
 } // namespace
 
+// Note: layers here carry transparency only via the ALPHA channel
+// (channelType::TRANSPARENCY_MASK, id -1), not a real Photoshop layer mask
+// (id -2, shown as a separate mask thumbnail in the Layers panel). Upstream
+// PSD output does write a real mask per layer, but the vendored Psd_SDK's
+// export path has no support for it: ExportLayer::MAX_CHANNEL_COUNT is
+// hardcoded to 4 (third_party/psd_sdk/src/Psd/PsdExportLayer.h) and
+// GetExtraDataLength() always emits a zero-length mask-data block
+// (third_party/psd_sdk/src/Psd/PsdExport.cpp) -- there's no channel ID -2
+// case anywhere in the writer. Compositing is unaffected (alpha already
+// encodes the same transparency); the only loss is Photoshop's separate
+// mask-editing handle. Adding real mask support would mean patching the
+// vendored writer to carry forward across future vendor updates -- not
+// done here.
 bool write_psd(const std::string & path, int canvas_w, int canvas_h,
                const std::vector<std::pair<std::string, std::vector<uint8_t>>> & layers,
                const std::vector<std::array<int, 4>> & xyxy) {

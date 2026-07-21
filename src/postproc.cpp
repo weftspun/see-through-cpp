@@ -178,7 +178,13 @@ void crop_part(Part & p) {
         }
     }
     p.depth_median = median_of(std::move(dvals));
-    if (x1 < 0) return;
+    // no connected component at all (tag has zero real content, e.g. this
+    // character wears no ear/eye/head accessory): drop it here, same as the
+    // near-empty-crop test below does for components that exist but are too
+    // sparse -- otherwise p.img.w/h are left at the full canvas size passed
+    // in by make_part(), which only checks `p.img.w > 0` and so leaks this
+    // tag through as a full-canvas, depth_median==1.0 phantom layer.
+    if (x1 < 0) { p.img.w = p.img.h = 0; return; }
     x1++; y1++;
     Image img2, dep2;
     img2.w = x1 - x0; img2.h = y1 - y0; img2.c = 4;
