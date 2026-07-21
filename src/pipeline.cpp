@@ -70,26 +70,24 @@ static PerfAccum g_perf;
 
 static ggml_backend_t pipe_backend(const PipelineConfig & cfg) {
     if (cfg.device == "cpu") {
-        // CPU route is blocklisted -- GPU only (whichever backend this build
-        // was compiled with, e.g. CUDA or Vulkan). This isn't just "no silent
-        // fallback" anymore: --device cpu is rejected outright, same as any
-        // other unsupported --device value.
-        fprintf(stderr, "error: --device cpu is not supported -- this build is "
-                        "GPU-only (backend selected at build time via GGML_CUDA/"
-                        "GGML_VULKAN/etc.). Run without --device to auto-select "
-                        "the first GPU ggml finds.\n");
+        // CPU route is blocklisted -- GPU (Vulkan) only. This isn't just
+        // "no silent fallback" anymore: --device cpu is rejected outright,
+        // same as any other unsupported --device value.
+        fprintf(stderr, "error: --device cpu is not supported -- this build is GPU"
+                        "-only (Vulkan). Run without --device (auto-selects the "
+                        "first GPU) or pass --device vulkan.\n");
         exit(1);
     }
     ggml_backend_dev_t d = pipe_gpu(cfg);
     if (d) {
         // One backend per process, reused across every graph: creating a
-        // fresh GPU backend per run_graph_dev call (the old behavior) re-paid
-        // device/queue/descriptor setup dozens of times per run. Callers no
-        // longer free the returned backend (see pipe_backend_release).
+        // fresh Vulkan backend per run_graph_dev call (the old behavior)
+        // re-paid device/queue/descriptor setup dozens of times per run.
+        // Callers no longer free the returned backend (see pipe_backend_release).
         static ggml_backend_t backend = ggml_backend_dev_init(d, nullptr);
         return backend;
     }
-    fprintf(stderr, "error: no GPU device found -- this build is GPU-only, "
+    fprintf(stderr, "error: no GPU device found (Vulkan) -- this build is GPU-only, "
                     "there is no CPU fallback.\n");
     exit(1);
 }
@@ -1002,10 +1000,9 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
         root.ok = false;
         // Fail before any (multi-GB) model loading happens, not partway
         // through the first graph compute -- see pipe_backend().
-        fprintf(stderr, "error: --device cpu is not supported -- this build is "
-                        "GPU-only (backend selected at build time via GGML_CUDA/"
-                        "GGML_VULKAN/etc.). Run without --device to auto-select "
-                        "the first GPU ggml finds.\n");
+        fprintf(stderr, "error: --device cpu is not supported -- this build is GPU"
+                        "-only (Vulkan). Run without --device (auto-selects the "
+                        "first GPU) or pass --device vulkan.\n");
         return false;
     }
     const int RES = cfg.res;

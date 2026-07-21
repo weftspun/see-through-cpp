@@ -1,8 +1,7 @@
 // Pipeline stages for the see-through CLI: CLIP tag encoding, the
 // apply_layerdiff v3 two-pass diffusion (body + head crop), the Marigold
-// depth stage, and PSD assembly. GPU-only (whichever backend this build was
-// compiled with, e.g. CUDA or Vulkan); each stage loads and frees its own
-// weights.
+// depth stage, and PSD assembly. GPU (Vulkan)-only; each stage loads and
+// frees its own weights.
 #pragma once
 
 #include "image_utils.h"
@@ -24,7 +23,7 @@ struct PipelineConfig {
     uint64_t seed = 42;
     int  threads = 8;
     bool verbose = true;
-    std::string device = "auto";  // any value other than "cpu" selects the first GPU ggml finds. GPU-only: "cpu" is rejected, not a fallback.
+    std::string device = "auto";  // "auto"/"vulkan" = first GPU. GPU-only: "cpu" is rejected, not a fallback.
     std::string debug_dir;        // when set: dump per-stage stats + frames
     // when set: each span (see otel_jsonl.h) is appended + fflush()'d to
     // this JSONL file the instant it closes, not batched until the run

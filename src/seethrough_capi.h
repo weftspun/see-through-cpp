@@ -45,7 +45,7 @@ typedef struct st_case {
 // (tol = atol + rtol_auto * max|ref|, rtol_auto scaled by reduction length).
 ST_API double st_witness_check(const st_case * c);
 
-// primary device name (e.g. "CUDA0 (...)", "Vulkan0 (...)", or "CPU"), static storage
+// primary device name ("Vulkan0 (...)" or "CPU"), static storage
 ST_API const char * st_device(void);
 
 // Flat-scalar variant for FFI hosts without struct marshalling (Lean 4

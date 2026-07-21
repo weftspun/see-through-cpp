@@ -35,9 +35,8 @@ typedef struct st_render_result {
 } st_render_result;
 
 // Renders one encoded image (anything stb_image can decode: PNG/JPEG/etc.)
-// into z-ordered layers. `device` is "auto" (or any value other than "cpu";
-// selects the first GPU ggml finds -- hard error if none found) -- GPU-only,
-// "cpu" is rejected outright.
+// into z-ordered layers. `device` is "auto" or "vulkan" (both select the first
+// GPU; hard error if none found) -- GPU-only, "cpu" is rejected outright.
 // Returns 0 on success; nonzero on failure (bad image, unsupported device,
 // model load failure, or a pipeline stage returning false) with *out left
 // zero-initialized. On success, the caller must release *out via
