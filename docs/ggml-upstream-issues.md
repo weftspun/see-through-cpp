@@ -602,6 +602,72 @@ Not yet done: full 30-step production validation (only 8 steps —
 the count that originally triggered the collapse — was re-tested after
 this fix) and Q4_0 quantized-model validation at this shape.
 
+## 5. Vulkan NV_coopmat2 flash-attention kernel wrong at production shapes
+   (2026-07-20)
+
+A re-run of the Lean kernel-witness gate (`verify/KernelGate.lean`) found
+`flash_attn_ext` failing by 5x-12x tolerance at every production attention
+shape — self-attention at t1600/t4096/t6400, the 77-token text/tag
+cross-attention, and cross-frame/temporal attention — directly
+contradicting item 4's earlier "the existing Lean flash witness cases ...
+pass cleanly" and "`flash_attn` is now ruled out, decisively" conclusions
+for these same shapes.
+
+```
+flash-t1600-b13:  interval x9.85   (tolerance: <=1.0)
+flash-t6400-b2:   interval x12.49
+flash-t6400-b1:   interval x10.90
+flash-t4096-b12:  interval x8.55
+flash-t4096-b1:   interval x7.75
+flash-cross-77:   interval x8.66
+flash-temporal:   interval x4.80
+```
+
+`tiled-*` (query-tiled naive attention, `Model.tiled_naive_attn`) is exact
+(0.0) at every identical shape, ruling out "the naive reference itself
+overflowed" (item 4's known false-positive class for `flash-t4096-b13`,
+excluded from this domain for that reason) — `flash-t4096-b1` (0.34GB
+naive-reference buffer), `flash-cross-77` (0.26GB), and `flash-temporal`
+(0.04GB) are all far under Vulkan's ~4.295GB single-allocation limit, so
+that known artifact class doesn't apply here.
+
+**Root cause, confirmed**: bisected with `GGML_VK_DISABLE_COOPMAT2=1`
+(falls back from `NV_coopmat2` to `KHR_coopmat`, still tensor-core-
+accelerated via the cross-vendor extension). Every violation above drops
+to 0.04-0.06, comfortably contained; the full witness search returns
+`provablyNone`/`VERIFY PASS`. This is NVIDIA's proprietary cooperative-
+matrix flash-attention kernel specifically producing wrong numbers on
+this RTX 4090 — not `flash_attn`'s math, not our usage of it, and not a
+regression in our own code since item 4's validation (same vendored ggml
+commit, `git log` confirms no change to `KernelGate.lean` since the
+query-tiled-attention commit). Either item 4's original synthetic-weight
+witness cases never actually exercised these shapes correctly, or this is
+a genuine ggml-vulkan regression that predates this investigation and was
+simply never caught by a witness case sensitive enough to see it.
+
+**Fix**: `pipe_gpu()` (`src/pipeline.cpp`) now calls `getenv`/`_putenv_s`
+to force `GGML_VK_DISABLE_COOPMAT2=1` before any Vulkan device is queried
+(ggml-vulkan reads this env var during device capability detection, the
+first time a device is touched) — covers every entry point (CLI, C ABI,
+the Lean witness harness itself) uniformly, once, via a static guard.
+With this in place, `layerdiff-unet`'s flash_attn override (item 4's
+original "Lean-witness-validated exact" preference) is trustworthy again
+and stays enabled.
+
+**Does not explain**: a separate, still-open symptom this session was
+chasing (L/R connected-component splitting failing for
+`eyewhite`/`eyebrow`/`ears`/`eyelash`/`irides`/`handwear` — our decode
+produces exactly one instance of these normally-paired features, not two
+merged/bridged ones) persisted identically under `tiled_naive_attn`,
+which already avoided the coopmat2 defect entirely before this fix
+existed. Ruled out as this defect's downstream effect; still open.
+
+This is worth reporting upstream to ggml/llama.cpp: `NV_coopmat2`
+flash-attention producing 5-12x-tolerance-violating output relative to
+both the naive reference and the `KHR_coopmat` path, on an RTX 4090, at
+head_dim=64 (a completely standard, non-exotic shape) — not yet reduced
+to a minimal repro outside this project's own harness.
+
 ## Remediation policy
 
 For any ggml kernel defect that blocks production and has no reasonable
