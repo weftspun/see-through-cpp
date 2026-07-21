@@ -153,7 +153,27 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
     if (m.conv_row_chunk && stride == 1 && pad == 1 &&
         w->ne[0] == 3 && x->ne[0] * x->ne[1] >= m.conv_row_chunk_min_hw) {
         const int64_t W = x->ne[0], H = x->ne[1], C = x->ne[2], N = x->ne[3];
-        const int64_t NCH = 8, TS = (H + NCH - 1) / NCH;
+        // Chunk count sized to the actual im2col transient, not a fixed 8:
+        // the fixed count dates from f16-model VRAM pressure; with Q4
+        // weights the finest UNet level's transient is ~4GB and the coarser
+        // levels are well under 1GB, so blanket 8-way tiling just multiplied
+        // im2col/concat/cont dispatches (measured via GGML_VK_PERF_LOGGER:
+        // conv overhead ops were ~0.5s of a 4.1s UNet step). Budget default
+        // 2GB keeps every chunk comfortably under Vulkan's ~4.29GB
+        // maxStorageBufferRange; NCH==1 collapses to a single untiled
+        // im2col+mul_mat with no halo/crop/concat at all.
+        const ggml_type imt = w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+        int64_t budget_mb = 2048;
+        if (const char * e = getenv("SEETHROUGH_ROWCHUNK_BUDGET_MB")) budget_mb = atoll(e);
+        const int64_t im2col_bytes = W * H * N * C * 9 * (imt == GGML_TYPE_F16 ? 2 : 4);
+        const int64_t NCH = std::max<int64_t>(1, (im2col_bytes + budget_mb * 1024 * 1024 - 1) / (budget_mb * 1024 * 1024));
+        const int64_t TS = (H + NCH - 1) / NCH;
+        if (NCH == 1) {
+            ggml_tensor * im = ggml_im2col(ctx, w, x, 1, 1, 1, 1, 1, 1, true, imt);
+            ggml_tensor * r = conv_mm(ctx, im, w);
+            if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
+            return r;
+        }
         bool rc = m.conv_row_chunk;
         m.conv_row_chunk = false;
         ggml_tensor * acc = nullptr;
@@ -203,7 +223,17 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
     // paths exist to avoid at large (1280px) spatial sizes -- that needs a
     // row-chunked Winograd variant or replacing ggml_conv_2d_direct
     // specifically, neither done yet.
-    if (stride == 1 && pad == 1 && w->ne[0] == 3 && w->ne[1] == 3) {
+    //
+    // OPT-IN only (SEETHROUGH_WINOGRAD=1): verified exact, but measured
+    // SLOWER than plain im2col+mul_mat at production shapes. Its
+    // composition (16 batch=1 ggml_out_prod calls + add/sub/concat/cont
+    // transform trees per conv) made OUT_PROD alone 24% of a TransparentVAE
+    // decode graph and exploded node counts (~33k CONTs/graph) -- the
+    // theoretical 2.25x FLOP saving never survived the op-count and
+    // out_prod-kernel overhead (GGML_VK_PERF_LOGGER, 2026-07-20). Revisit
+    // only as a fused kernel, not an op composition.
+    if (getenv("SEETHROUGH_WINOGRAD") &&
+        stride == 1 && pad == 1 && w->ne[0] == 3 && w->ne[1] == 3) {
         if (ggml_tensor * r = conv2d_winograd_3x3s1(m, x, pre)) { return r; }
     }
     // ggml_conv_2d unconditionally rounds activations to f16 in im2col; for
@@ -232,7 +262,23 @@ ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & 
 
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_context * ctx = m.ctx_g;
-    ggml_tensor * y = mul_mat_f32(ctx, m.get(pre + ".weight"), x);
+    ggml_tensor * w = m.get(pre + ".weight");
+    // A linear is pointwise over every position past ne0, so a contiguous
+    // higher-rank input is exactly its 2D flattening -- and the flattened
+    // GEMM is dramatically faster when ne1 is small with a large ne2/ne3
+    // "batch": cross_frame_block runs every linear/FFN at (C, F=13,
+    // S=1600..6400), which ggml_mul_mat executes as S tiny 13-column GEMMs,
+    // re-reading the whole (possibly quantized) weight S times. Measured
+    // via GGML_VK_PERF_LOGGER at production shape: the n=13/batch=1600
+    // variant of the same multiply runs ~5x slower per FLOP than its
+    // n=1600/batch=13 sibling, and these calls were ~52% of every UNet
+    // step. Flattening is a pure view (no copy, no math change): identical
+    // element order in, identical element order out.
+    const bool flatten = ggml_is_contiguous(x) && (x->ne[2] > 1 || x->ne[3] > 1);
+    const int64_t ne1 = x->ne[1], ne2 = x->ne[2], ne3 = x->ne[3];
+    if (flatten) x = ggml_reshape_2d(ctx, x, x->ne[0], ne1 * ne2 * ne3);
+    ggml_tensor * y = mul_mat_f32(ctx, w, x);
+    if (flatten) y = ggml_reshape_4d(ctx, y, y->ne[0], ne1, ne2, ne3);
     if (m.has(pre + ".bias")) y = ggml_add(ctx, y, m.get(pre + ".bias"));
     return y;
 }

@@ -48,6 +48,26 @@ static ggml_backend_dev_t pipe_gpu(const PipelineConfig & cfg) {
     return ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
 }
 
+// Cheap wall-clock attribution for the 1m12s speedup work (MADR 0010):
+// stage spans (profiling/spans.jsonl) are too coarse to split model-load /
+// backend-init / graph-build / alloc / compute costs, so accumulate those
+// here and print once per process at exit.
+static double now_s() {
+    using namespace std::chrono;
+    return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
+struct PerfAccum {
+    double load = 0, backend_init = 0, graph_build = 0, alloc = 0, compute = 0, readback = 0;
+    long   n_backend = 0, n_graphs = 0;
+    ~PerfAccum() {
+        fprintf(stderr,
+                "[perf] model_load=%.1fs backend_init=%.1fs (n=%ld) graph_build=%.1fs "
+                "alloc=%.1fs compute=%.1fs readback=%.1fs (graphs=%ld)\n",
+                load, backend_init, n_backend, graph_build, alloc, compute, readback, n_graphs);
+    }
+};
+static PerfAccum g_perf;
+
 static ggml_backend_t pipe_backend(const PipelineConfig & cfg) {
     if (cfg.device == "cpu") {
         // CPU route is blocklisted -- GPU (Vulkan) only. This isn't just
@@ -59,14 +79,34 @@ static ggml_backend_t pipe_backend(const PipelineConfig & cfg) {
         exit(1);
     }
     ggml_backend_dev_t d = pipe_gpu(cfg);
-    if (d) return ggml_backend_dev_init(d, nullptr);
+    if (d) {
+        // One backend per process, reused across every graph: creating a
+        // fresh Vulkan backend per run_graph_dev call (the old behavior)
+        // re-paid device/queue/descriptor setup dozens of times per run.
+        // Callers no longer free the returned backend (see pipe_backend_release).
+        static ggml_backend_t backend = ggml_backend_dev_init(d, nullptr);
+        return backend;
+    }
     fprintf(stderr, "error: no GPU device found (Vulkan) -- this build is GPU-only, "
                     "there is no CPU fallback.\n");
     exit(1);
 }
 
+// Paired with pipe_backend(): the backend is a process-lifetime singleton,
+// so "freeing" it is a no-op kept only to mark ownership at call sites.
+static void pipe_backend_release(ggml_backend_t) {}
+
 static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string & path,
                       bool unet = false) {
+    const double t0 = now_s();
+    struct LoadTimer {
+        const std::string & p; double t0;
+        ~LoadTimer() {
+            double dt = now_s() - t0;
+            g_perf.load += dt;
+            fprintf(stderr, "[perf] load %s: %.2fs\n", p.c_str(), dt);
+        }
+    } lt{ path, t0 };
     ggml_backend_dev_t d = pipe_gpu(cfg);
     if (d) {
         if (unet) {
@@ -118,6 +158,21 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
         // first, or a way to distinguish which UNet is loading, not a
         // blanket `unet` flag.
         m.tiled_naive_attn = !getenv("SEETHROUGH_NO_TILED_ATTN");
+        // tiled_naive_attn takes priority over flash_attn in attn_tokens, so
+        // the blanket default above silently downgraded BOTH diffusion UNets
+        // to O(T^2) naive attention even with m.flash_attn set. The tiled
+        // default exists for attn_block (VAE mid_block/unet1024 spatial
+        // attention, where the plain naive path overflows Vulkan's
+        // maxStorageBufferRange at 1280px) -- unet_frame.cpp has no
+        // attn_block call sites at all, so it never needed it. flash_attn
+        // is Lean-witness-validated exact for layerdiff-unet's token shapes
+        // (docs/ggml-upstream-issues.md #4); marigold-unet is NOT validated
+        // (produced corrupted depth at res>=768 when flash flipped on, see
+        // the MADR-0010 candidate-5 note) and stays on the tiled path.
+        if (unet && path.find("layerdiff-unet") != std::string::npos &&
+            !getenv("SEETHROUGH_TILED_ATTN_LAYERDIFF")) {
+            m.tiled_naive_attn = false;
+        }
         return m.load_backend(path.c_str(), ggml_backend_dev_buffer_type(d));
     }
     return m.load(path.c_str());
@@ -131,16 +186,22 @@ static bool run_graph_dev(const PipelineConfig & cfg, Model & m, size_t max_node
     size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
     ggml_init_params ip = { meta, nullptr, true };
     m.ctx_g = ggml_init(ip);
+    double tb = now_s();
     std::vector<ggml_tensor *> out_t = build();
     for (ggml_tensor * t : out_t) ggml_set_output(t);
+    double t1 = now_s(); g_perf.graph_build += t1 - tb; tb = t1;
     ggml_backend_t backend = pipe_backend(cfg);
+    t1 = now_s(); g_perf.backend_init += t1 - tb; g_perf.n_backend++; tb = t1;
     ggml_cgraph * gf = ggml_new_graph_custom(m.ctx_g, max_nodes, false);
     for (ggml_tensor * t : out_t) ggml_build_forward_expand(gf, t);
+    t1 = now_s(); g_perf.graph_build += t1 - tb; tb = t1;
     ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
     bool ok = ggml_gallocr_alloc_graph(alloc, gf);
+    t1 = now_s(); g_perf.alloc += t1 - tb; tb = t1; g_perf.n_graphs++;
     if (ok) {
         set_inputs();
         ok = ggml_backend_graph_compute(backend, gf) == GGML_STATUS_SUCCESS;
+        t1 = now_s(); g_perf.compute += t1 - tb; tb = t1;
     }
     if (ok) {
         outs.resize(out_t.size());
@@ -148,9 +209,10 @@ static bool run_graph_dev(const PipelineConfig & cfg, Model & m, size_t max_node
             outs[i].resize(ggml_nelements(out_t[i]));
             ggml_backend_tensor_get(out_t[i], outs[i].data(), 0, outs[i].size() * 4);
         }
+        g_perf.readback += now_s() - tb;
     }
     ggml_gallocr_free(alloc);
-    ggml_backend_free(backend);
+    pipe_backend_release(backend);
     ggml_free(m.ctx_g);
     m.ctx_g = nullptr;
     return ok;
@@ -318,6 +380,7 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         ggml_build_forward_expand(gf, out);
         ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         if (!ggml_gallocr_alloc_graph(alloc, gf)) { fprintf(stderr, "alloc failed\n"); return false; }
+        std::vector<double> step_times;
 
         std::vector<float> tid_v(6 * F), eps(D), input((size_t) ZR * ZR * 8 * F), noise(D);
         for (int f = 0; f < F; f++) {
@@ -339,8 +402,10 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             std::vector<float> tstep(F, (float) sch.timesteps[s]);
             ggml_backend_tensor_set(ts, tstep.data(), 0, F * 4);
 
+            const double st0 = now_s();
             if (ggml_backend_graph_compute(backend, gf) != GGML_STATUS_SUCCESS) return false;
             ggml_backend_tensor_get(out, eps.data(), 0, D * 4);
+            step_times.push_back(now_s() - st0);
             for (float & v : noise) v = nrm(rng);
             sch.step(lat, eps, noise);
             if (!cfg.debug_dir.empty()) {
@@ -353,8 +418,15 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             if (cfg.verbose) { printf("[layerdiff] step %d/%d (t=%d)\r", s + 1, cfg.steps, sch.timesteps[s]); fflush(stdout); }
         }
         if (cfg.verbose) printf("\n");
+        {
+            double tot = 0; for (double v : step_times) tot += v;
+            fprintf(stderr, "[perf] layerdiff unet loop: %.1fs total, first=%.2fs, rest_avg=%.2fs (%zu steps)\n",
+                    tot, step_times.empty() ? 0.0 : step_times[0],
+                    step_times.size() > 1 ? (tot - step_times[0]) / (step_times.size() - 1) : 0.0,
+                    step_times.size());
+        }
         ggml_gallocr_free(alloc);
-        ggml_backend_free(backend);
+        pipe_backend_release(backend);
         ggml_free(ctx);
         m.ctx_g = nullptr;
     }
@@ -368,22 +440,31 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         if (pipe_gpu(cfg)) mv.conv_row_chunk = true;   // exact im2col, row-tiled
 
         layers_out.assign(F, Image{});
+        // Build + allocate the (fixed-shape) decode graph ONCE and reuse it
+        // for all F frames: the per-frame run_graph_dev pattern rebuilt and
+        // re-allocated a ~393k-node graph 13 (body) + 11 (head) times per
+        // run, pure CPU-side churn (MADR 0010 candidate 4).
+        size_t max_nodes = 393216;
+        size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);
+        ggml_init_params ip = { meta, nullptr, true };
+        mv.ctx_g = ggml_init(ip);
+        ggml_tensor * zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
+        ggml_set_input(zt);
+        ggml_tensor * dec_out = trans_vae_decode(mv, zt);
+        ggml_set_output(dec_out);
+        ggml_backend_t backend = pipe_backend(cfg);
+        ggml_cgraph * gf = ggml_new_graph_custom(mv.ctx_g, max_nodes, false);
+        ggml_build_forward_expand(gf, dec_out);
+        ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (!ggml_gallocr_alloc_graph(alloc, gf)) { fprintf(stderr, "decode alloc failed\n"); return false; }
+        std::vector<std::vector<float>> outs(1);
+        outs[0].resize(ggml_nelements(dec_out));
         for (int f = 0; f < F; f++) {
             std::vector<float> z(DZ);
             for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
-            ggml_tensor * zt = nullptr;
-            std::vector<std::vector<float>> outs;
-            // vae_decode_tiled multiplies node count ~16x at res=1280 (16
-            // latent tiles, each running the full decoder) -- generous budget.
-            bool ok = run_graph_dev(cfg, mv, 393216,
-                [&]() {
-                    zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
-                    ggml_set_input(zt);
-                    ggml_tensor * out = trans_vae_decode(mv, zt);
-                    return std::vector<ggml_tensor *>{ out };
-                },
-                [&]() { ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4); },
-                outs);
+            ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4);
+            bool ok = ggml_backend_graph_compute(backend, gf) == GGML_STATUS_SUCCESS;
+            if (ok) ggml_backend_tensor_get(dec_out, outs[0].data(), 0, outs[0].size() * 4);
             if (!ok) return false;
             // planar RGBA -> interleaved RGBA
             Image & im = layers_out[f];
@@ -418,6 +499,10 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
             if (cfg.verbose) { printf("[layerdiff] decode %d/%d\r", f + 1, F); fflush(stdout); }
         }
         if (cfg.verbose) printf("\n");
+        ggml_gallocr_free(alloc);
+        pipe_backend_release(backend);
+        ggml_free(mv.ctx_g);
+        mv.ctx_g = nullptr;
     }
     return true;
 }
@@ -440,11 +525,27 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         std::string p = cfg.model_dir + "/marigold-vae.gguf";
         if (!pipe_load(cfg, mv, p)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
 
-        // Reverted to one graph build+compute per image (was briefly
-        // batched in chunks for perf; that version corrupted depth output
-        // for most frames via a bug never fully isolated -- see git history
-        // -- and hadn't even shown a proven speedup once the OOM it first
-        // hit was fixed. Correctness over an unproven optimization.
+        // One fixed-shape encode graph, reused for all F+1 images (page +
+        // per-layer): the old per-image run_graph_dev pattern rebuilt and
+        // re-allocated the full tiled-encoder graph 21 times per run (MADR
+        // 0010 candidate 4). NOTE this is graph REUSE with per-image input
+        // re-set, the same proven pattern as the UNet step loops -- not the
+        // earlier reverted attempt that BATCHED multiple images into one
+        // graph and corrupted depth output (see git history).
+        size_t enc_nodes = 294912;
+        size_t enc_meta = ggml_tensor_overhead() * enc_nodes + ggml_graph_overhead_custom(enc_nodes, false);
+        ggml_init_params enc_ip = { enc_meta, nullptr, true };
+        mv.ctx_g = ggml_init(enc_ip);
+        ggml_tensor * x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
+        ggml_set_input(x);
+        ggml_tensor * enc_out = ggml_scale(mv.ctx_g, vae_encode_tiled(mv, x), SCALE);
+        ggml_set_output(enc_out);
+        ggml_backend_t backend = pipe_backend(cfg);
+        ggml_cgraph * gf = ggml_new_graph_custom(mv.ctx_g, enc_nodes, false);
+        ggml_build_forward_expand(gf, enc_out);
+        ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (!ggml_gallocr_alloc_graph(alloc, gf)) { fprintf(stderr, "marigold encode alloc failed\n"); return false; }
+
         auto encode_one = [&](const Image & argb, std::vector<float> & out_lat) -> bool {
             Image im = argb;
             if (im.w != RES || im.h != RES) im = smart_resize(im, RES, RES);
@@ -455,21 +556,11 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
                     feed[(size_t) c * RES * RES + i] = rgb.data[i * 3 + c] * 2.0f - 1.0f;
                 }
             }
-            ggml_tensor * x = nullptr;
-            std::vector<std::vector<float>> outs;
-            // vae_encode_tiled: see the layerdiff page-latent comment above;
-            // passes through to plain vae_encode when RES fits in one tile
-            // (depth_res is usually <=512, but stay consistent/safe if not).
-            bool ok = run_graph_dev(cfg, mv, 294912,
-                [&]() {
-                    x = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, RES, RES, 3, 1);
-                    ggml_set_input(x);
-                    return std::vector<ggml_tensor *>{ ggml_scale(mv.ctx_g, vae_encode_tiled(mv, x), SCALE) };
-                },
-                [&]() { ggml_backend_tensor_set(x, feed.data(), 0, feed.size() * 4); },
-                outs);
-            if (ok) out_lat = std::move(outs[0]);
-            return ok;
+            ggml_backend_tensor_set(x, feed.data(), 0, feed.size() * 4);
+            if (ggml_backend_graph_compute(backend, gf) != GGML_STATUS_SUCCESS) return false;
+            out_lat.resize(ggml_nelements(enc_out));
+            ggml_backend_tensor_get(enc_out, out_lat.data(), 0, out_lat.size() * 4);
+            return true;
         };
 
         std::vector<float> page_lat;
@@ -482,6 +573,10 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
             if (cfg.verbose) { printf("[marigold] cond %d/%d\r", f + 1, F); fflush(stdout); }
         }
         if (cfg.verbose) printf("\n");
+        ggml_gallocr_free(alloc);
+        pipe_backend_release(backend);
+        ggml_free(mv.ctx_g);
+        mv.ctx_g = nullptr;
     }
 
     // empty-prompt embedding from marigold-te
@@ -543,6 +638,7 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         ggml_build_forward_expand(gf, out);
         ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
         if (!ggml_gallocr_alloc_graph(alloc, gf)) return false;
+        std::vector<double> step_times;
 
         std::vector<float> ehs_f((size_t) 1024 * 2 * F), eps(D), input((size_t) ZR * ZR * 12 * F);
         for (int f = 0; f < F; f++) {
@@ -559,14 +655,23 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
             ggml_backend_tensor_set(sample, input.data(), 0, input.size() * 4);
             std::vector<float> tstep(F, (float) sch.timesteps[s]);
             ggml_backend_tensor_set(ts, tstep.data(), 0, F * 4);
+            const double st0 = now_s();
             if (ggml_backend_graph_compute(backend, gf) != GGML_STATUS_SUCCESS) return false;
             ggml_backend_tensor_get(out, eps.data(), 0, D * 4);
+            step_times.push_back(now_s() - st0);
             sch.step(lat, eps, s);
             if (cfg.verbose) { printf("[marigold] step %d/%d\r", s + 1, cfg.depth_steps); fflush(stdout); }
         }
         if (cfg.verbose) printf("\n");
+        {
+            double tot = 0; for (double v : step_times) tot += v;
+            fprintf(stderr, "[perf] marigold unet loop: %.1fs total, first=%.2fs, rest_avg=%.2fs (%zu steps)\n",
+                    tot, step_times.empty() ? 0.0 : step_times[0],
+                    step_times.size() > 1 ? (tot - step_times[0]) / (step_times.size() - 1) : 0.0,
+                    step_times.size());
+        }
         ggml_gallocr_free(alloc);
-        ggml_backend_free(backend);
+        pipe_backend_release(backend);
         ggml_free(ctx);
         m.ctx_g = nullptr;
     }
@@ -578,19 +683,29 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
         if (!pipe_load(cfg, mv, p)) return false;
         if (pipe_gpu(cfg)) mv.conv_row_chunk = true;   // decode stage only
         depths_out.assign(F, Image{});
+        // Same graph-reuse pattern as the cond-encode loop above: one build/
+        // alloc, F computes.
+        size_t dec_nodes = 24576;
+        size_t dec_meta = ggml_tensor_overhead() * dec_nodes + ggml_graph_overhead_custom(dec_nodes, false);
+        ggml_init_params dec_ip = { dec_meta, nullptr, true };
+        mv.ctx_g = ggml_init(dec_ip);
+        ggml_tensor * zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
+        ggml_set_input(zt);
+        ggml_tensor * dec_out = vae_decode_tiled(mv, zt);
+        ggml_set_output(dec_out);
+        ggml_backend_t backend = pipe_backend(cfg);
+        ggml_cgraph * gf = ggml_new_graph_custom(mv.ctx_g, dec_nodes, false);
+        ggml_build_forward_expand(gf, dec_out);
+        ggml_gallocr_t alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+        if (!ggml_gallocr_alloc_graph(alloc, gf)) { fprintf(stderr, "marigold decode alloc failed\n"); return false; }
+        std::vector<std::vector<float>> outs(1);
+        outs[0].resize(ggml_nelements(dec_out));
         for (int f = 0; f < F; f++) {
             std::vector<float> z(DZ);
             for (size_t i = 0; i < DZ; i++) z[i] = lat[f * DZ + i] / SCALE;
-            ggml_tensor * zt = nullptr;
-            std::vector<std::vector<float>> outs;
-            bool ok = run_graph_dev(cfg, mv, 24576,
-                [&]() {
-                    zt = ggml_new_tensor_4d(mv.ctx_g, GGML_TYPE_F32, ZR, ZR, 4, 1);
-                    ggml_set_input(zt);
-                    return std::vector<ggml_tensor *>{ vae_decode_tiled(mv, zt) };
-                },
-                [&]() { ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4); },
-                outs);
+            ggml_backend_tensor_set(zt, z.data(), 0, z.size() * 4);
+            bool ok = ggml_backend_graph_compute(backend, gf) == GGML_STATUS_SUCCESS;
+            if (ok) ggml_backend_tensor_get(dec_out, outs[0].data(), 0, outs[0].size() * 4);
             if (!ok) return false;
             Image & d = depths_out[f];
             d.w = d.h = RES; d.c = 1;
@@ -604,6 +719,10 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
             if (cfg.verbose) { printf("[marigold] decode %d/%d\r", f + 1, F); fflush(stdout); }
         }
         if (cfg.verbose) printf("\n");
+        ggml_gallocr_free(alloc);
+        pipe_backend_release(backend);
+        ggml_free(mv.ctx_g);
+        mv.ctx_g = nullptr;
     }
     return true;
 }
