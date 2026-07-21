@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """End-to-end upstream reference: call the hosted see-through-demo Space's
-/inference API on test_image3.png with our CLI-default settings, save the
-returned PSD, and record the wall time (the ~1m12s benchmark this whole
-speedup effort is chasing). Mirrors the MADR-0009 workflow."""
+/inference API on a given image with our CLI-default settings, save the
+returned PSD, and record the wall time. Independent ground truth for
+comparing against a local ggml run of the same image/settings -- doesn't
+require a local PyTorch install.
+
+Usage: python tools/hf_space_infer.py <image> [out.psd]
+Requires HF_TOKEN in the environment and gradio_client installed."""
 import os, shutil, sys, time
 
 from gradio_client import Client, handle_file
 
-img = sys.argv[1] if len(sys.argv) > 1 else "test_image3.png"
-out_psd = sys.argv[2] if len(sys.argv) > 2 else "upstream_test3.psd"
+if len(sys.argv) < 2:
+    print("usage: hf_space_infer.py <image> [out.psd]", file=sys.stderr)
+    sys.exit(1)
+img = sys.argv[1]
+out_psd = sys.argv[2] if len(sys.argv) > 2 else "upstream_reference.psd"
 
 t0 = time.time()
 client = Client("24yearsold/see-through-demo", token=os.environ["HF_TOKEN"])

@@ -47,6 +47,5 @@ reference_output.psd
 /bisect_*
 debug_*.png
 /test_image_*
-/run_test_image*.log
-/run_untiled.log
 debug_headbug/
+debug_untiled/
