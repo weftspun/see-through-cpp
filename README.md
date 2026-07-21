@@ -47,9 +47,11 @@ upstream's `dump_parts_psd`.
 
 Useful flags:
 
-- `--steps 30` / `--res 768` / `--depth-res 768` — quality/speed knobs
-  (`768` is the default for both; bump `--res` up to `1280` for sharper
-  output at a noticeably higher time cost)
+- `--steps 30` / `--res 1280` / `--depth-res 768` — quality/speed knobs,
+  matching upstream's own `inference_psd.py` CLI defaults exactly
+  (`--resolution 1280`, `--resolution_depth 768`, `--inference_steps 30`);
+  drop `--res` to `768` for a noticeably faster, still-decent-quality run
+  (that's what the HF Space demo defaults to, for its free-tier GPU budget)
 - `--png-dir <dir>` — also export each layer as a separate PNG
 - `--seed 42` — for reproducible output
 - `--no-split-depth` / `--no-split-lr` — disable the depth-cluster

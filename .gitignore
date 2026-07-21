@@ -38,3 +38,9 @@ golden_output.psd
 /t1_*
 reference_output.psd
 /out_*
+/out.psd
+/out.psd.json
+/out_depth.psd
+/parity_test*
+/paper_text.txt
+*.pdf

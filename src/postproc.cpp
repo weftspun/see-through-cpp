@@ -487,32 +487,23 @@ void further_extr_parts(std::map<std::string, Part> & parts, const Image & fullp
 
     auto face = parts.find("face");
     if (face != parts.end()) {
-        // "eyes" is never a key by this point -- tag_lr_split() above already
-        // explodes eyewhite/irides/eyelash/eyebrow into their own parts (and
-        // further into -l/-r variants when it finds two components), so the
-        // clamp has to name every one of those or it silently no-ops and
-        // leaves eye layers at their raw (often noisy-for-small-regions)
-        // marigold depth median, letting them sort behind the face. If a
-        // caller's lr_split_tags excludes one of these tags (or PARTSEG_LR
-        // is off), the corresponding parts.find() lookups below simply miss
-        // and no-op -- same as any other missing tag, not a special case.
-        // Clamped tags used to all collapse onto the SAME depth_median
-        // (face_median - 0.001), which erased their relative depth signal:
-        // the final sort (pipeline.cpp) then had to break ties among
-        // identically-valued parts, and since it used std::sort (not
-        // stable), that tie-break was unspecified rather than reflecting
-        // any real front/back relationship -- it only happened to look like
-        // "alphabetical by tag name" because it rode on parts' pre-sort
-        // std::map key order. Give each tag in the clamp group a distinct
-        // offset instead, ordered back-to-front by anatomy: eyewhite (base
-        // of the eye) is furthest back, eyebrow is frontmost; nose/mouth
-        // don't overlap the eye stack so their relative slot doesn't matter
-        // visually, but still gets a distinct value for determinism.
+        // Matches upstream inference_utils.py's further_extr exactly: the
+        // face-depth clamp only ever applies to nose/mouth (checked
+        // conditionally, only pulled forward if placed behind face) and to
+        // ears (unconditional). Upstream's clamp block also references a
+        // generic "eyes" key alongside nose/mouth, but by this point in the
+        // pipeline "eyes" has already been exploded into eyewhite/irides/
+        // eyelash/eyebrow (and further into -l/-r variants) by tag_lr_split,
+        // so that check is permanently dead code there -- eyewhite/irides/
+        // eyelash/eyebrow are NOT clamped in real upstream output and keep
+        // their raw (sometimes noisy-for-small-regions) marigold depth
+        // median. An earlier version of this code added those tags to the
+        // clamp on the theory that upstream's no-op was a bug worth fixing;
+        // it wasn't -- confirmed against upstream's actual source and a real
+        // reference_output.psd, whose eyewhite/irides/eyelash/eyebrow layers
+        // sort at their raw depth, not clamped near face. Matching that
+        // faithfully here instead of "fixing" it.
         const char * clamp_order[] = {
-            "eyewhite", "eyewhite-l", "eyewhite-r",
-            "irides", "irides-l", "irides-r",
-            "eyelash", "eyelash-l", "eyelash-r",
-            "eyebrow", "eyebrow-l", "eyebrow-r",
             "nose", "mouth",
         };
         const double eps = 1e-4;

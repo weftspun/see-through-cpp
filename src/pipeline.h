@@ -17,7 +17,7 @@
 struct PipelineConfig {
     std::string model_dir = "models";
     int  steps = 30;
-    int  res = 768;
+    int  res = 1280;
     int  depth_res = 768;
     int  depth_steps = 4;
     uint64_t seed = 42;
