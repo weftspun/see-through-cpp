@@ -132,10 +132,69 @@ static ggml_tensor * mul_mat_f32(ggml_context * ctx, ggml_tensor * a, ggml_tenso
     return r;
 }
 
+// ggml-vulkan's quantize_y fast path (see mul_mat_f32's comment above)
+// requires ggml_is_contiguous(src1) -- the SECOND ggml_mul_mat operand,
+// i.e. the activation, not the weight (ggml-vulkan.cpp's
+// ggml_vk_mul_mat_q_f16, `quantize_y = ... && ggml_is_contiguous(src1) &&
+// ...`). Deliberately break that contiguity -- zero-pad ne[0] by one
+// element then view back the original ne[0], making nb[1] one element
+// wider than a tightly-packed row would be -- so the backend falls back to
+// its existing (already-correct, no int8 detour) dequant kernel instead.
+// Cheap: one extra column of zeros (ne[1] elements) and a view, not a full
+// permute+cont+out_prod composition, and works for any operand type
+// (unlike mul_mat_op, which needs an f32 upcast and has no Vulkan f16
+// OUT_PROD support at all).
+static ggml_tensor * break_contig(ggml_context * ctx, ggml_tensor * b) {
+    // ggml-vulkan's PAD kernel, like OUT_PROD, has no f16 dispatch -- and
+    // quantize_y only ever triggers for an f32 activation operand anyway
+    // (ggml_vk_mul_mat_q_f16's condition includes src1->type ==
+    // GGML_TYPE_F32), so upcasting here isn't paying for precision we
+    // didn't already need: b is f32 in every call site quantize_y would
+    // otherwise engage on.
+    if (b->type != GGML_TYPE_F32) b = ggml_cast(ctx, b, GGML_TYPE_F32);
+    ggml_tensor * padded = ggml_pad(ctx, b, 1, 0, 0, 0);   // (ne0+1, ne1, ne2, ne3), zero-filled
+    return ggml_view_4d(ctx, padded, b->ne[0], b->ne[1], b->ne[2], b->ne[3],
+                        padded->nb[1], padded->nb[2], padded->nb[3], 0);
+}
+
+static bool use_conv_noquant() {
+    static int cached = -1;
+    if (cached < 0) { cached = getenv("SEETHROUGH_CONV_NOQUANT") ? 1 : 0; }
+    return cached != 0;
+}
+
+static ggml_tensor * mul_mat_noquant(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
+    ggml_tensor * r = ggml_mul_mat(ctx, a, break_contig(ctx, b));
+    ggml_mul_mat_set_prec(r, GGML_PREC_F32);
+    return r;
+}
+
+// See unet_frame.cpp's mul_mat_op/SEETHROUGH_ATTN_OUTPROD comment: same
+// out_prod-based exact replacement for ggml_mul_mat(a,b), gated separately
+// here (SEETHROUGH_CONV_OUTPROD) to A/B this specific site.
+static ggml_tensor * mul_mat_op(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
+    // ggml-vulkan's OUT_PROD kernel only supports f32 operands (no f16 or
+    // quantized-type dispatch, unlike mul_mat's fused dequant paths) --
+    // upcast whichever operand isn't already f32 before permuting.
+    if (a->type != GGML_TYPE_F32) a = ggml_cast(ctx, a, GGML_TYPE_F32);
+    if (b->type != GGML_TYPE_F32) b = ggml_cast(ctx, b, GGML_TYPE_F32);
+    ggml_tensor * a_op = ggml_cont(ctx, ggml_permute(ctx, a, 1, 0, 2, 3));
+    ggml_tensor * b_op = ggml_cont(ctx, ggml_permute(ctx, b, 1, 0, 2, 3));
+    return ggml_out_prod(ctx, a_op, b_op);
+}
+
+static bool use_conv_outprod() {
+    static int cached = -1;
+    if (cached < 0) { cached = getenv("SEETHROUGH_CONV_OUTPROD") ? 1 : 0; }
+    return cached != 0;
+}
+
 static ggml_tensor * conv_mm(ggml_context * ctx, ggml_tensor * im, ggml_tensor * w) {
     ggml_tensor * im2d = ggml_reshape_2d(ctx, im, im->ne[0], im->ne[3] * im->ne[2] * im->ne[1]);  // [K, N*OH*OW]
     ggml_tensor * w2d  = ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2], w->ne[3]);        // [K, OC]
-    ggml_tensor * r = mul_mat_f32(ctx, w2d, im2d);                                     // [OC, N*OH*OW]
+    ggml_tensor * r = use_conv_outprod() ? mul_mat_op(ctx, w2d, im2d)
+                    : use_conv_noquant() ? mul_mat_noquant(ctx, w2d, im2d)
+                    : mul_mat_f32(ctx, w2d, im2d); // [OC, N*OH*OW]
     r = ggml_reshape_4d(ctx, r, w->ne[3], im->ne[1], im->ne[2], im->ne[3]);            // [OC,OW,OH,N]
     return ggml_cont(ctx, ggml_permute(ctx, r, 2, 0, 1, 3));                            // -> [OW,OH,OC,N]
 }
@@ -293,6 +352,10 @@ ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_tensor * y;
     if (m.linear_fast || getenv("SEETHROUGH_LINEAR_FAST")) {
         y = ggml_mul_mat(ctx, w, x);
+    } else if (use_conv_outprod()) {
+        y = mul_mat_op(ctx, w, x);
+    } else if (use_conv_noquant()) {
+        y = mul_mat_noquant(ctx, w, x);
     } else {
         y = mul_mat_f32(ctx, w, x);
     }

@@ -45,10 +45,16 @@ static bool st_load(Model & m, const char * path) {
     // kernel divergence instead of running the naive path it always uses
     // in production.
     if (fa && fa[0] == '1' && d) m.flash_attn = true;
+    const char * tl = getenv("SEETHROUGH_TILED");
+    if (tl && tl[0] == '1') m.tiled_naive_attn = true;
     const char * ch = getenv("SEETHROUGH_CHUNK");
     if (ch && ch[0] == '1') m.direct_conv = true;
     const char * rw = getenv("SEETHROUGH_ROWCHUNK");
     if (rw && rw[0] == '1') m.conv_row_chunk = true;
+    // default floor (256*256) never engages for UNet latent-level shapes
+    // (40x40 through 160x160) -- matches pipeline.cpp's pipe_load override
+    const char * rwmin = getenv("SEETHROUGH_ROWCHUNK_MIN_HW");
+    if (rwmin) m.conv_row_chunk_min_hw = atoi(rwmin);
     if (d) return m.load_backend(path, ggml_backend_dev_buffer_type(d));
     return m.load(path);
 }

@@ -54,7 +54,12 @@ ggml_tensor * sdxl_add_embed(Model & m, ggml_tensor * text_embeds, ggml_tensor *
 // DownBlock2D upstream), so this is the only extra checkpoint available
 // there. For bisecting exactly where within the first down block a
 // divergence from upstream starts.
+// `fine_taps_mid`: when true and `taps` is non-null, pushes mid_block's two
+// internal sub-stages (resnets.0 output, attentions.0/transformer3d output)
+// before the existing final mid_block tap (resnets.1 output) -- narrows a
+// mid_block-localized divergence down to resnet vs. attention.
 ggml_tensor * unet_frame_forward(Model & m, ggml_tensor * sample, ggml_tensor * emb,
                                  ggml_tensor * ehs,
                                  std::vector<ggml_tensor *> * taps = nullptr,
-                                 bool fine_taps_down0 = false);
+                                 bool fine_taps_down0 = false,
+                                 bool fine_taps_mid = false);
