@@ -53,8 +53,6 @@ int st_render(const char * model_dir, const uint8_t * image_data, size_t image_l
     SeeThroughResult result;
     if (!run_see_through(cfg, input, result)) { return 3; }
 
-    out->svg = dup_str(result.svg);
-    out->svg_len = result.svg.size();
     out->num_layers = result.png_layers.size();
     out->layers = static_cast<st_layer *>(calloc(out->num_layers, sizeof(st_layer)));
     for (size_t i = 0; i < out->num_layers; i++) {
@@ -67,7 +65,6 @@ int st_render(const char * model_dir, const uint8_t * image_data, size_t image_l
 
 void st_free_result(st_render_result * r) {
     if (!r) { return; }
-    free(r->svg);
     for (size_t i = 0; i < r->num_layers; i++) {
         free(r->layers[i].tag);
         free(r->layers[i].png);

@@ -1,8 +1,7 @@
-// see-through CLI: single anime illustration -> layered SVG (+ optional
+// see-through CLI: single anime illustration -> layered PSD (+ optional
 // per-layer PNGs), the full upstream inference_psd.py flow on ggml.
 //
-//   see-through -m <model-dir> -i in.png -o out.svg (or out.psd for a flat,
-//   upstream-parity PSD instead of SVG)
+//   see-through -m <model-dir> -i in.png -o out.psd
 //               [--seed N] [--steps N] [--res N] [--depth-res N] [--threads N]
 //               [--no-split-depth] [--no-split-lr]
 //               [--split-depth-tags tag1,tag2,...] [--split-lr-tags tag1,tag2,...]
@@ -57,7 +56,7 @@ static std::vector<std::string> split_csv(const std::string & s) {
 
 int main(int argc, char ** argv) {
     PipelineConfig cfg;
-    std::string in_path, out_path = "out.svg", png_dir;
+    std::string in_path, out_path = "out.psd", png_dir;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() { return std::string(argv[++i]); };
@@ -79,7 +78,7 @@ int main(int argc, char ** argv) {
         else { fprintf(stderr, "unknown arg %s\n", a.c_str()); return 1; }
     }
     if (in_path.empty()) {
-        fprintf(stderr, "usage: see-through -m <model-dir> -i in.png -o out.svg "
+        fprintf(stderr, "usage: see-through -m <model-dir> -i in.png -o out.psd "
                         "[--seed N] [--steps N] [--res N] [--depth-res N] [--threads N] "
                         "[--device vulkan] (GPU-only; --device cpu is not supported) "
                         "[--no-split-depth] [--no-split-lr] "
@@ -136,27 +135,25 @@ int main(int argc, char ** argv) {
         printf("wrote %d PNG layers to %s\n", pzi, png_dir.c_str());
     }
 
-    bool as_psd = out_path.size() >= 4 && out_path.compare(out_path.size() - 4, 4, ".psd") == 0;
-    if (as_psd) {
-        if (!write_psd(out_path, result.canvas_w, result.canvas_h, result.png_layers, result.layer_xyxy)) {
-            fprintf(stderr, "failed to write %s\n", out_path.c_str());
-            return 1;
-        }
-        // matches upstream dump_parts_psd's "<stem>_depth.psd" companion
-        std::string depth_path = out_path.substr(0, out_path.size() - 4) + "_depth.psd";
-        if (!write_psd_gray(depth_path, result.canvas_w, result.canvas_h, result.depth_layers, result.layer_xyxy)) {
-            fprintf(stderr, "failed to write %s\n", depth_path.c_str());
-            return 1;
-        }
-        printf("wrote %s\n", depth_path.c_str());
-        // matches upstream's "<psd_path>.json" metadata sidecar
-        std::ofstream json_f(out_path + ".json");
-        json_f << build_psd_json(result);
-        printf("wrote %s.json\n", out_path.c_str());
-    } else {
-        std::ofstream svg(out_path);
-        svg << result.svg;
+    if (out_path.size() < 4 || out_path.compare(out_path.size() - 4, 4, ".psd") != 0) {
+        fprintf(stderr, "-o must end in .psd (got %s)\n", out_path.c_str());
+        return 1;
     }
+    if (!write_psd(out_path, result.canvas_w, result.canvas_h, result.png_layers, result.layer_xyxy)) {
+        fprintf(stderr, "failed to write %s\n", out_path.c_str());
+        return 1;
+    }
+    // matches upstream dump_parts_psd's "<stem>_depth.psd" companion
+    std::string depth_path = out_path.substr(0, out_path.size() - 4) + "_depth.psd";
+    if (!write_psd_gray(depth_path, result.canvas_w, result.canvas_h, result.depth_layers, result.layer_xyxy)) {
+        fprintf(stderr, "failed to write %s\n", depth_path.c_str());
+        return 1;
+    }
+    printf("wrote %s\n", depth_path.c_str());
+    // matches upstream's "<psd_path>.json" metadata sidecar
+    std::ofstream json_f(out_path + ".json");
+    json_f << build_psd_json(result);
+    printf("wrote %s.json\n", out_path.c_str());
     printf("wrote %s (%zu layers)\n", out_path.c_str(), result.png_layers.size());
     // result.spans were already appended + flushed to cfg.spans_path
     // incrementally as each closed (see run_see_through) -- no batch write

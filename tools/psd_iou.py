@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Upstream-parity check: per-tag alpha-mask IoU between our own --png-dir
-SVG output and a real upstream PSD (already expanded to per-layer PNGs by
-tests/psd_layers.cpp). See docs/decisions/0008-open-work.md's
-"Upstream parity" checklist item.
+output (placed via its out.psd.json sidecar) and a real upstream PSD
+(already expanded to per-layer PNGs by tests/psd_layers.cpp). See
+docs/decisions/0008-open-work.md's "Upstream parity" checklist item.
 
 Usage:
-    python tools/psd_iou.py <our.svg> <upstream_layers_dir> [--thr 0.5]
+    python tools/psd_iou.py <our_png_dir> <our.psd.json> <upstream_layers_dir> [--thr 0.5]
 
-Matches layers by tag name (our SVG's data-tag attribute vs. the upstream
-PNGs' <NNN>_<tag>.png filenames, both already normalized to the same
-alnum/-/_ charset). For each match, thresholds both alpha channels and
-reports intersection-over-union on the full canvas.
+Matches layers by tag name (our --png-dir's <NNN>_<tag>.png filenames vs.
+the upstream PNGs' <NNN>_<tag>.png filenames, both already normalized to
+the same alnum/-/_ charset). For each match, thresholds both alpha channels
+and reports intersection-over-union on the full canvas.
 """
 import argparse
-import base64
-import io
+import glob
+import json
+import os
 import re
 import sys
 
@@ -22,32 +23,25 @@ from PIL import Image
 import numpy as np
 
 
-def load_our_layers(svg_path):
-    svg = open(svg_path, encoding="utf-8").read()
-    canvas = re.search(r'width="(\d+)" height="(\d+)"', svg)
-    w, h = int(canvas.group(1)), int(canvas.group(2))
+def load_our_layers(png_dir, json_path):
+    meta = json.load(open(json_path, encoding="utf-8"))
+    h, w = meta["frame_size"]
     layers = {}
-    pattern = (
-        r'<image id="([^"]+)" x="(-?\d+)" y="(-?\d+)" width="(\d+)" height="(\d+)"'
-        r'[^>]*xlink:href="data:image/png;base64,([^"]+)"'
-    )
-    for m in re.finditer(pattern, svg):
-        tag, x, y, iw, ih, data = m.groups()
-        if tag.startswith("depth-"):
+    for path in sorted(glob.glob(os.path.join(png_dir, "*.png"))):
+        base = os.path.splitext(os.path.basename(path))[0]
+        tag = re.sub(r"^\d+_", "", base)
+        info = meta["parts"].get(tag)
+        if info is None:
             continue
-        img = Image.open(io.BytesIO(base64.b64decode(data))).convert("RGBA")
+        x0, y0, x1, y1 = info["xyxy"]
+        img = Image.open(path).convert("RGBA")
         alpha = np.zeros((h, w), dtype=np.uint8)
-        crop_alpha = np.array(img)[:, :, 3]
-        x, y = int(x), int(y)
-        alpha[y:y + int(ih), x:x + int(iw)] = crop_alpha
+        alpha[y0:y1, x0:x1] = np.array(img)[:, :, 3]
         layers[tag] = alpha
     return w, h, layers
 
 
 def load_upstream_layers(layers_dir):
-    import glob
-    import os
-
     layers = {}
     for path in sorted(glob.glob(os.path.join(layers_dir, "*.png"))):
         base = os.path.splitext(os.path.basename(path))[0]
@@ -69,12 +63,13 @@ def iou(a, b, thr):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("our_svg")
+    ap.add_argument("our_png_dir")
+    ap.add_argument("our_psd_json")
     ap.add_argument("upstream_layers_dir")
     ap.add_argument("--thr", type=float, default=0.5)
     args = ap.parse_args()
 
-    ow, oh, ours = load_our_layers(args.our_svg)
+    ow, oh, ours = load_our_layers(args.our_png_dir, args.our_psd_json)
     theirs = load_upstream_layers(args.upstream_layers_dir)
 
     matched = sorted(set(ours) & set(theirs))

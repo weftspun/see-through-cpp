@@ -87,7 +87,7 @@ target_include_directories(seethrough_c PRIVATE third_party/ggml/src)
 
 # separate from seethrough_c above: that one is scoped to Lean witness
 # testing (st_witness_check*), this one drives the real production
-# pipeline (image bytes in, SVG + PNG layers out) for embedding in a
+# pipeline (image bytes in, PNG layers out) for embedding in a
 # server or other host process
 add_library(see_through_c SHARED src/see_through_capi.cpp)
 target_link_libraries(see_through_c PRIVATE seethrough)

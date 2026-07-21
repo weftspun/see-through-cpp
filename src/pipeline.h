@@ -70,21 +70,19 @@ bool marigold_depth(const PipelineConfig & cfg, const std::vector<Image> & layer
 // LaMa inpaint callback backed by lama.gguf (loads weights on first use)
 InpaintFn make_lama_inpaint(const PipelineConfig & cfg);
 
-// full pipeline: input image -> depth-ordered per-tag layers -> SVG document
-// (+ one PNG per layer, z-ordered back-to-front, tag as the id). Shared by
-// the CLI (see_through.cpp) and the C ABI (see_through_capi.h) so both stay
-// in sync with exactly one orchestration path.
+// full pipeline: input image -> depth-ordered per-tag layers (+ one PNG per
+// layer, z-ordered back-to-front, tag as the id). Shared by the CLI
+// (see_through.cpp) and the C ABI (see_through_capi.h) so both stay in sync
+// with exactly one orchestration path.
 struct SeeThroughResult {
-    std::string svg;
     std::vector<std::pair<std::string, std::vector<uint8_t>>> png_layers;
     // 1-channel (grayscale) depth PNG per layer, same order/tag/crop as
     // png_layers -- upstream's dump_parts_psd writes this as a companion
     // "<name>_depth.psd" alongside the color PSD.
     std::vector<std::pair<std::string, std::vector<uint8_t>>> depth_layers;
     // per-entry {x0,y0,x1,y1} in canvas_w x canvas_h coords, same order/index
-    // as png_layers/depth_layers -- carries the same placement the SVG's
-    // <image x y> attributes encode, for consumers (e.g. PSD export) that
-    // want layer bytes + position without re-parsing the SVG.
+    // as png_layers/depth_layers -- carries each layer's placement for
+    // consumers (e.g. PSD export) that want layer bytes + position.
     std::vector<std::array<int, 4>> layer_xyxy;
     // same order/index as png_layers -- upstream's dump_parts_psd carries
     // this (plus tag/xyxy) in the "<name>.psd.json" metadata sidecar.

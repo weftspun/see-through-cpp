@@ -1,5 +1,5 @@
-// C ABI for the see-through pipeline: image bytes in, layered SVG (+
-// per-layer PNGs) out. Distinct from seethrough_capi.h, which is scoped to
+// C ABI for the see-through pipeline: image bytes in, layered per-layer PNGs
+// out. Distinct from seethrough_capi.h, which is scoped to
 // Lean/plausible-witness-dag kernel witness testing (st_witness_check*) --
 // this one drives the real production pipeline (run_see_through in
 // pipeline.cpp), for embedding in other processes (e.g. a server) without
@@ -30,14 +30,12 @@ typedef struct st_layer {
 } st_layer;
 
 typedef struct st_render_result {
-    char * svg;            // full SVG document, null-terminated, owned by the result
-    size_t svg_len;         // strlen(svg), for convenience
-    st_layer * layers;      // z-ordered back-to-front, same order as the SVG
+    st_layer * layers;      // z-ordered back-to-front
     size_t num_layers;
 } st_render_result;
 
 // Renders one encoded image (anything stb_image can decode: PNG/JPEG/etc.)
-// into a layered SVG. `device` is "auto" or "vulkan" (both select the first
+// into z-ordered layers. `device` is "auto" or "vulkan" (both select the first
 // GPU; hard error if none found) -- GPU-only, "cpu" is rejected outright.
 // Returns 0 on success; nonzero on failure (bad image, unsupported device,
 // model load failure, or a pipeline stage returning false) with *out left

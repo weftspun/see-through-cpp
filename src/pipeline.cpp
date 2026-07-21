@@ -222,8 +222,7 @@ static bool run_graph_dev(const PipelineConfig & cfg, Model & m, size_t max_node
 // stage 1: text encoding
 // ---------------------------------------------------------------------------
 
-// semantic identifier shared by --png-dir filenames, debug dumps, and the
-// SVG's per-layer <image id="..."> attributes (e.g. ThorVG lookup by id)
+// semantic identifier shared by --png-dir filenames and debug dumps
 static std::string safe_id(const std::string & tag) {
     std::string s = tag;
     std::replace(s.begin(), s.end(), ' ', '_');
@@ -845,7 +844,7 @@ InpaintFn make_lama_inpaint(const PipelineConfig & cfg_in) {
 // ---------------------------------------------------------------------------
 // full see-through orchestration (extracted from the CLI's main() so it can
 // be called from a C ABI / server too, not just argv-driven binaries):
-// input image -> per-tag depth-ordered layers -> SVG (+ optional PNG layers)
+// input image -> per-tag depth-ordered PNG layers
 // ---------------------------------------------------------------------------
 
 // upstream img_alpha_blending (premultiplied=False): sequential "over"
@@ -938,21 +937,6 @@ static bool bbox_alpha_largest_cc(const Image & img, float thr, int * x, int * y
     if (best_size == 0) { return false; }
     *x = best_x0; *y = best_y0; *w = best_x1 - best_x0 + 1; *h = best_y1 - best_y0 + 1;
     return true;
-}
-
-// base64 (no line wrapping, standard alphabet)
-static std::string b64_encode(const std::vector<uint8_t> & d) {
-    static const char * T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string o;
-    o.reserve((d.size() + 2) / 3 * 4);
-    for (size_t i = 0; i < d.size(); i += 3) {
-        uint32_t v = d[i] << 16 | (i + 1 < d.size() ? d[i + 1] << 8 : 0)
-                   | (i + 2 < d.size() ? d[i + 2] : 0);
-        o += T[v >> 18]; o += T[(v >> 12) & 63];
-        o += i + 1 < d.size() ? T[(v >> 6) & 63] : '=';
-        o += i + 2 < d.size() ? T[v & 63] : '=';
-    }
-    return o;
 }
 
 static uint64_t now_unix_nano() {
@@ -1358,7 +1342,7 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
         }
     }
 
-    // ---- heuristics + SVG/PNG assembly ----
+    // ---- heuristics + PNG assembly ----
     SpanScope postproc(result, trace_id, root.span_id(), "postproc", cfg.verbose, cfg.spans_path);
     InpaintFn inpaint = make_lama_inpaint(cfg);
     further_extr_parts(parts, fullpage, inpaint, cfg.partseg_flags,
@@ -1373,23 +1357,15 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
     std::stable_sort(ordered.begin(), ordered.end(),
                      [](const Part * a, const Part * b) { return a->depth_median > b->depth_median; });
 
-    // encode each part's color PNG exactly once -- result.png_layers and the
-    // SVG's base64 <image> embed used to each call encode_png() separately,
-    // silently doubling PNG-encode cost across every layer (a real chunk of
-    // the ~92s postproc stage measured in profiling/spans.jsonl).
+    // encode each part's color PNG once into result.png_layers
     result.png_layers.clear();
     result.depth_layers.clear();
     result.layer_xyxy.clear();
     result.layer_depth_median.clear();
     result.canvas_w = result.canvas_h = RES;
-    std::vector<std::vector<uint8_t>> part_pngs;
-    part_pngs.reserve(ordered.size());
     for (const Part * p : ordered) {
-        part_pngs.push_back(encode_png(p->img));
         // raw tag, not safe_id(): matches upstream's create_pixel_layer(name=tag)
-        // and this same function's own SVG data-tag attribute below -- safe_id()
-        // is an SVG `id=` XML-Name requirement (no spaces), not the tag's identity.
-        result.png_layers.emplace_back(p->tag, part_pngs.back());
+        result.png_layers.emplace_back(p->tag, encode_png(p->img));
         result.layer_xyxy.push_back({ p->xyxy[0], p->xyxy[1], p->xyxy[2], p->xyxy[3] });
         result.layer_depth_median.push_back(p->depth_median);
 
@@ -1398,39 +1374,6 @@ bool run_see_through(const PipelineConfig & cfg, const Image & input, SeeThrough
         d1.data = p->depth.data;
         result.depth_layers.emplace_back(p->tag, encode_png(d1));
     }
-
-    // layered SVG: document order = z order (back to front); depth maps in
-    // a hidden group; tag/depth_median/xyxy carried as data- attributes
-    std::string svg;
-    svg += "<svg xmlns=\"http://www.w3.org/2000/svg\" ";
-    svg += "xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"" + std::to_string(RES)
-         + "\" height=\"" + std::to_string(RES) + "\">\n";
-    int zi = 0;
-    for (size_t oi = 0; oi < ordered.size(); oi++) {
-        const Part * p = ordered[oi];
-        std::string png = b64_encode(part_pngs[oi]);
-        svg += "  <image id=\"" + safe_id(p->tag) + "\" x=\"" + std::to_string(p->xyxy[0])
-             + "\" y=\"" + std::to_string(p->xyxy[1])
-             + "\" width=\"" + std::to_string(p->img.w) + "\" height=\"" + std::to_string(p->img.h)
-             + "\" data-tag=\"" + p->tag + "\" data-z=\"" + std::to_string(zi)
-             + "\" data-depth-median=\"" + std::to_string(p->depth_median)
-             + "\" xlink:href=\"data:image/png;base64," + png + "\"/>\n";
-        zi++;
-    }
-    svg += "  <g id=\"depth\" display=\"none\">\n";
-    zi = 0;
-    for (size_t oi = 0; oi < ordered.size(); oi++) {
-        const Part * p = ordered[oi];
-        svg += "    <image id=\"depth-" + safe_id(p->tag) + "\" x=\"" + std::to_string(p->xyxy[0])
-             + "\" y=\"" + std::to_string(p->xyxy[1])
-             + "\" width=\"" + std::to_string(p->depth.w) + "\" height=\"" + std::to_string(p->depth.h)
-             + "\" data-tag=\"" + p->tag + "\" data-z=\"" + std::to_string(zi)
-             + "\" xlink:href=\"data:image/png;base64," + b64_encode(result.depth_layers[oi].second)
-             + "\"/>\n";
-        zi++;
-    }
-    svg += "  </g>\n</svg>\n";
-    result.svg = std::move(svg);
 
     // `root` (constructed at the top of this function) and `postproc` both
     // emit their spans here via RAII as the function returns -- no manual

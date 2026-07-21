@@ -2,7 +2,7 @@
 
 Turns a single anime character illustration into up to 23 separate,
 fully-inpainted layers (hair, face, clothing, accessories, etc.) plus a
-depth map, saved as a layered SVG. C++
+depth map, saved as a layered PSD. C++
 port of [See-Through](https://github.com/shitagaki-lab/see-through)
 (Shitagaki Lab, SIGGRAPH 2026).
 
@@ -34,17 +34,16 @@ cmake -B build -G Ninja -DGGML_VULKAN=ON && cmake --build build
 ## Run:
 
 ```sh
-./build/see-through -m models -i in.png -o out.svg
+./build/see-through -m models -i in.png -o out.psd
 ```
 
 Input is loaded via [stb_image](https://github.com/nothings/stb), so PNG, JPEG,
 BMP, TGA, GIF, and PSD are supported — **not WebP**; convert first (e.g.
 `ffmpeg -i in.webp in.png`).
 
-Produces `out.svg` — one `<image>` element per layer, each with a
-`data-tag`/`data-z`/`data-depth-median` attribute. Pass `-o out.psd` instead
-to get a flat, layered PSD (plus an `out_depth.psd` companion and an
-`out.psd.json` metadata sidecar), matching upstream's `dump_parts_psd`.
+`-o` must end in `.psd`. Produces a flat, layered `out.psd` (plus an
+`out_depth.psd` companion and an `out.psd.json` metadata sidecar), matching
+upstream's `dump_parts_psd`.
 
 Useful flags:
 

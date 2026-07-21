@@ -3,7 +3,7 @@
 // "post-MVP: C ABI + server"). One endpoint:
 //
 //   POST /render  (body: raw image bytes; JSON response, same shape as the
-//                  httplib-based server: {"svg":..., "layers":[{"tag":...,
+//                  httplib-based server: {"layers":[{"tag":...,
 //                  "png_base64":...}, ...]})
 //
 //   see-through-server-h3 -m <model-dir> [--port 4433] [--cert p.pem] [--key k.pem]
@@ -60,7 +60,7 @@ std::string render_to_json(const std::string & model_dir, const std::string & im
     if (rc != 0) {
         return "{\"error\":\"pipeline failed (code " + std::to_string(rc) + ")\"}";
     }
-    std::string json = "{\"svg\":\"" + json_escape(std::string(r.svg, r.svg_len)) + "\",\"layers\":[";
+    std::string json = "{\"layers\":[";
     for (size_t i = 0; i < r.num_layers; i++) {
         if (i) { json += ","; }
         json += "{\"tag\":\"" + json_escape(r.layers[i].tag) + "\",\"png_base64\":\""
