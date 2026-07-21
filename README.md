@@ -42,7 +42,11 @@ BMP, TGA, GIF, and PSD are supported — **not WebP**; convert first (e.g.
 `ffmpeg -i in.webp in.png`).
 
 Produces `out.svg` — one `<image>` element per layer, each with a
-`data-tag`/`data-z`/`data-depth-median` attribute. Useful flags:
+`data-tag`/`data-z`/`data-depth-median` attribute. Pass `-o out.psd` instead
+to get a flat, layered PSD (plus an `out_depth.psd` companion and an
+`out.psd.json` metadata sidecar), matching upstream's `dump_parts_psd`.
+
+Useful flags:
 
 - `--steps 30` / `--res 768` / `--depth-res 768` — quality/speed knobs
   (`--res 768` is noticeably faster with little quality loss — a good
