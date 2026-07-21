@@ -44,3 +44,5 @@ reference_output.psd
 /parity_test*
 /paper_text.txt
 *.pdf
+/bisect_*
+debug_*.png

@@ -44,7 +44,32 @@ static std::string kv_by_suffix(const Model & m, const char * suf) {
     return "";
 }
 
+// ggml-vulkan's NV_coopmat2 flash-attention kernel is numerically broken on
+// this hardware: witness-confirmed (verify/KernelGate.lean, 2026-07-20)
+// interval violations of 5x-12x tolerance at every production attention
+// shape (self, cross, and cross-frame/temporal), root-caused to the
+// NV_coopmat2 code path specifically -- forcing the KHR_coopmat fallback
+// (still tensor-core-accelerated, just via the cross-vendor extension
+// instead of NVIDIA's proprietary one) drops every one of those same
+// violations to <0.07, comfortably within tolerance. ggml-vulkan reads this
+// env var via getenv() during device capability detection the first time a
+// Vulkan device is queried, so it must be set before that -- do it here,
+// once, guarded by a static flag, so every entry point (CLI, C ABI, the
+// Lean witness harness) gets the fix regardless of which of them happens to
+// touch a GPU device first.
+static void disable_broken_coopmat2() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+#if defined(_WIN32)
+    _putenv_s("GGML_VK_DISABLE_COOPMAT2", "1");
+#else
+    setenv("GGML_VK_DISABLE_COOPMAT2", "1", 1);
+#endif
+}
+
 static ggml_backend_dev_t pipe_gpu(const PipelineConfig & cfg) {
+    disable_broken_coopmat2();
     return ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
 }
 
@@ -158,17 +183,18 @@ static bool pipe_load(const PipelineConfig & cfg, Model & m, const std::string &
         // first, or a way to distinguish which UNet is loading, not a
         // blanket `unet` flag.
         m.tiled_naive_attn = !getenv("SEETHROUGH_NO_TILED_ATTN");
-        // tiled_naive_attn takes priority over flash_attn in attn_tokens, so
-        // the blanket default above silently downgraded BOTH diffusion UNets
-        // to O(T^2) naive attention even with m.flash_attn set. The tiled
-        // default exists for attn_block (VAE mid_block/unet1024 spatial
-        // attention, where the plain naive path overflows Vulkan's
-        // maxStorageBufferRange at 1280px) -- unet_frame.cpp has no
-        // attn_block call sites at all, so it never needed it. flash_attn
-        // is Lean-witness-validated exact for layerdiff-unet's token shapes
-        // (docs/ggml-upstream-issues.md #4); marigold-unet is NOT validated
-        // (produced corrupted depth at res>=768 when flash flipped on, see
-        // the MADR-0010 candidate-5 note) and stays on the tiled path.
+        // A later re-run of the Lean kernel-witness gate (verify/KernelGate,
+        // 2026-07-20) found flash_attn_ext failing at layerdiff-unet's
+        // production shapes (t1600/t4096/t6400 self-attention, 77-token
+        // cross-attention, cross-frame/temporal) by 5x-12x tolerance --
+        // root-caused to ggml-vulkan's NV_coopmat2 flash-attention kernel
+        // specifically being wrong on this hardware, not to flash_attn's
+        // math or our usage of it: forcing the KHR_coopmat fallback
+        // (disable_broken_coopmat2() above, done automatically for every
+        // entry point) drops every one of those violations to <0.07. With
+        // that fixed at the source, the original "Lean-witness-validated
+        // exact for layerdiff-unet's shapes" claim holds again, so
+        // layerdiff-unet keeps its flash_attn override below.
         if (unet && path.find("layerdiff-unet") != std::string::npos &&
             !getenv("SEETHROUGH_TILED_ATTN_LAYERDIFF")) {
             m.tiled_naive_attn = false;
