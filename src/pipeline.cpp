@@ -352,6 +352,13 @@ bool layerdiff_pass(const PipelineConfig & cfg, const Image & page_rgb,
         Model m;
         std::string p = cfg.model_dir + "/layerdiff-unet.gguf";
         if (!pipe_load(cfg, m, p, true)) { fprintf(stderr, "failed to load %s\n", p.c_str()); return false; }
+        // Fast (backend-default-precision) linear GEMMs for the BODY pass
+        // only: the full-pipeline SEETHROUGH_LINEAR_FAST A/B (2026-07-20)
+        // drifted only tiny head-pass facial layers (eyebrow/eyewear/mouth/
+        // nose IoU 0.23-0.83) while every body-pass layer stayed >=0.99, so
+        // the head pass (group_index 1, where all the small features live)
+        // keeps GGML_PREC_F32. SEETHROUGH_NO_LINEAR_FAST_BODY reverts.
+        m.linear_fast = group_index == 0 && !getenv("SEETHROUGH_NO_LINEAR_FAST_BODY");
 
         size_t max_nodes = 294912;
         size_t meta = ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false);

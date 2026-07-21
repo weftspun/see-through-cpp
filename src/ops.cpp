@@ -162,7 +162,13 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
         // 2GB keeps every chunk comfortably under Vulkan's ~4.29GB
         // maxStorageBufferRange; NCH==1 collapses to a single untiled
         // im2col+mul_mat with no halo/crop/concat at all.
-        const ggml_type imt = w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+        // SEETHROUGH_CONV_F16=1: f16 im2col even for quantized weights --
+        // halves im2col traffic and the GEMM's activation reads. MADR
+        // 0009's production-shape tap analysis already characterized f16
+        // conv-activation rounding in this UNet as ordinary noise that
+        // shrinks 20x through the up-path; opt-in until IoU-verified here.
+        const ggml_type imt = (w->type == GGML_TYPE_F16 || !getenv("SEETHROUGH_NO_CONV_F16"))
+                                  ? GGML_TYPE_F16 : GGML_TYPE_F32;
         int64_t budget_mb = 2048;
         if (const char * e = getenv("SEETHROUGH_ROWCHUNK_BUDGET_MB")) budget_mb = atoll(e);
         const int64_t im2col_bytes = W * H * N * C * 9 * (imt == GGML_TYPE_F16 ? 2 : 4);
@@ -239,7 +245,8 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
     // ggml_conv_2d unconditionally rounds activations to f16 in im2col; for
     // f32 weights (SDXL VAE encoder has activations too large for that) keep
     // the whole conv in f32 instead
-    ggml_type it = w->type == GGML_TYPE_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+    ggml_type it = (w->type == GGML_TYPE_F16 || !getenv("SEETHROUGH_NO_CONV_F16"))
+                       ? GGML_TYPE_F16 : GGML_TYPE_F32;
     ggml_tensor * im = ggml_im2col(ctx, w, x, stride, stride, pad, pad, 1, 1, true, it);
     ggml_tensor * r = conv_mm(ctx, im, w);
     if (m.has(pre + ".bias")) r = ggml_add(ctx, r, bias4d(ctx, m.get(pre + ".bias")));
@@ -277,7 +284,18 @@ ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     const bool flatten = ggml_is_contiguous(x) && (x->ne[2] > 1 || x->ne[3] > 1);
     const int64_t ne1 = x->ne[1], ne2 = x->ne[2], ne3 = x->ne[3];
     if (flatten) x = ggml_reshape_2d(ctx, x, x->ne[0], ne1 * ne2 * ne3);
-    ggml_tensor * y = mul_mat_f32(ctx, w, x);
+    // GGML_PREC_F32 was adopted for the VAE's fragile near-cancelling
+    // resnet reduction and flash attention (MADR 0009) -- it was never
+    // shown necessary for the UNet transformer linears, where f32
+    // accumulation halves coopmat2 GEMM throughput. Experiment gate:
+    // SEETHROUGH_LINEAR_FAST=1 uses the backend-default precision here
+    // (conv2d and attention keep their PREC_F32 guards regardless).
+    ggml_tensor * y;
+    if (m.linear_fast || getenv("SEETHROUGH_LINEAR_FAST")) {
+        y = ggml_mul_mat(ctx, w, x);
+    } else {
+        y = mul_mat_f32(ctx, w, x);
+    }
     if (flatten) y = ggml_reshape_4d(ctx, y, y->ne[0], ne1, ne2, ne3);
     if (m.has(pre + ".bias")) y = ggml_add(ctx, y, m.get(pre + ".bias"));
     return y;

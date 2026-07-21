@@ -23,6 +23,11 @@ struct Model {
     int   gn_groups = 32;
     float gn_eps    = 1e-6f;
     int   head_dim  = 0;      // spatial attn: 0 = one head of dim C
+    bool  linear_fast = false; // linear() GEMMs at backend-default precision
+                              // instead of GGML_PREC_F32 (2026-07-20 A/B:
+                              // full-pipeline fast-linear drifted only the
+                              // tiny head-pass facial layers; callers may
+                              // scope this per pass)
     bool  flash_attn = false; // token attention via ggml_flash_attn_ext (GPU)
     bool  tiled_naive_attn = false; // query-tiled naive attention instead of
                                   // flash_attn: same math as the plain naive

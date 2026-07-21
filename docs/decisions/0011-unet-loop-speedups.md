@@ -115,16 +115,45 @@ test_image3.png was 6m10s at the same code.
 
 ## Open items
 
-- `handwear-l` on the original `test_image.png` collapses to a ~17px
-  sliver in the optimized runs (deterministic across two runs; MADR 0009
-  recorded real content there). Flash-vs-tiled produced *identical*
-  output on test_image3, so flash is likely not the cause — this looks
-  like MADR 0008's "L/R-split sliver" with, finally, a deterministic
-  repro candidate. Needs a tiled-attn rerun on the restored
-  test_image.png to close.
+- `handwear-l` on the original `test_image.png` collapses to a ~17-19px
+  sliver — **flash exonerated by direct test**: a tiled-attention rerun
+  on the same image/seed reproduces the identical sliver (18px, IoU 0.95
+  against the flash run's 19px; handwear-r bit-identical at 19148px).
+  The sliver is deterministic and attention-mode-independent. This is
+  MADR 0008's "L/R-split sliver" open item with, finally, a concrete
+  repro: `test_image.png`, models-q4, `--res 1280 --steps 30 --seed 42`.
+  (MADR 0009's parity run recorded real handwear-l content on this image
+  with 0.93/0.96 IoU, so the delta vs that run — model set, seed, or
+  code drift — is the lead to pull.)
 - Upstream L/R-splits touching hands (handwear-l/-r both real on
   test_image3); our connected-component split keeps them merged. Parity
   gap, not corruption.
 - Next speed candidates, per-op profile: ~1.35s/step of f32 element-wise
-  ops (f16-activation experiment, env-gated); marigold stage 34s;
-  first-step shader-compile overhead (~3-4s/loop).
+  ops; marigold stage 34s; first-step shader-compile overhead
+  (~3-4s/loop).
+
+## Addendum: precision experiments (same session)
+
+Two env-gated experiments, each A/B'd against the adaptive-row-chunk run
+(`t3_rc`, 5m59s) on test_image3.png at identical settings:
+
+- **f16 im2col for quantized conv weights** (was f32): 5m22s, zero
+  layers below 0.99 IoU. Consistent with MADR 0009's production-shape tap
+  analysis (f16 conv-activation rounding is ordinary noise that shrinks
+  through the up-path). **Default-on**; `SEETHROUGH_NO_CONV_F16=1`
+  reverts.
+- **Backend-default-precision linear GEMMs** (dropping the blanket
+  GGML_PREC_F32, which was only ever motivated by the VAE resnet and
+  flash attention): full-pipeline version ran 5m17s but drifted the tiny
+  head-pass facial layers (eyebrow 0.23, eyewear 0.53, mouth 0.73, nose
+  0.83 IoU) while every body-pass layer stayed >=0.99 — so it ships
+  **scoped to the body pass only** (`Model::linear_fast`, set for
+  group_index 0; the head pass, where all small facial features live,
+  keeps f32 accumulation). `SEETHROUGH_NO_LINEAR_FAST_BODY=1` reverts;
+  `SEETHROUGH_LINEAR_FAST=1` forces it everywhere (accepting the drift).
+  Full-pipeline fast-linear remains available for speed-over-fidelity
+  use.
+
+Combined verification run (both defaults active): **5m05.9s end-to-end,
+zero layers below 0.99 IoU vs t3_rc**. Session total: ~12+ min →
+5m06s; upstream-live scoreboard 183s.
