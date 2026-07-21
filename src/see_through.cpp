@@ -80,7 +80,7 @@ int main(int argc, char ** argv) {
     if (in_path.empty()) {
         fprintf(stderr, "usage: see-through -m <model-dir> -i in.png -o out.psd "
                         "[--seed N] [--steps N] [--res N] [--depth-res N] [--threads N] "
-                        "[--device vulkan] (GPU-only; --device cpu is not supported) "
+                        "[--device auto] (GPU-only; --device cpu is not supported) "
                         "[--no-split-depth] [--no-split-lr] "
                         "[--split-depth-tags tag1,tag2,...] [--split-lr-tags tag1,tag2,...]\n");
         return 1;
