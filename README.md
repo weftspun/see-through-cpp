@@ -6,7 +6,7 @@ depth map, saved as a layered PSD. C++
 port of [See-Through](https://github.com/shitagaki-lab/see-through)
 (Shitagaki Lab, SIGGRAPH 2026).
 
-Requires an NVIDIA GPU with CUDA support (no CPU fallback).
+Requires a GPU with Vulkan support (no CPU fallback).
 
 ## Get the weights — download and unpack into a `models/` folder:
 
@@ -25,21 +25,11 @@ rm *.zst.part*
 
 (Or grab a prebuilt release binary instead of building)
 
-## Build (CUDA backend must be enabled explicitly — it's off by default in ggml):
+## Build (Vulkan backend must be enabled explicitly — it's off by default in ggml):
 
 ```sh
-cmake -B build -G Ninja -DGGML_CUDA=ON && cmake --build build
+cmake -B build -G Ninja -DGGML_VULKAN=ON && cmake --build build
 ```
-
-Requires the NVIDIA CUDA Toolkit installed, with `nvcc` able to find a
-compatible host compiler (on Windows: MSVC's `cl.exe`; nvcc pins a maximum
-supported MSVC version per release, which can lag behind a freshly-installed
-Visual Studio — if configure fails with `cl.exe` version errors, install an
-older MSVC toolset side by side, e.g. via the Visual Studio Installer's
-"Desktop development with C++" component picker, and pass
-`-DCMAKE_CUDA_HOST_COMPILER=<path to that cl.exe>`). If CMake can't
-auto-detect your GPU's compute capability, pin it explicitly, e.g.
-`-DCMAKE_CUDA_ARCHITECTURES=89` for Ada Lovelace (RTX 40-series).
 
 ## Run:
 
